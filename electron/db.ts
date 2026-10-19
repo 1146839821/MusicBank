@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3'
+import { musicCategories } from './music-categories.js'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
@@ -86,6 +87,16 @@ export class MusicBankDatabase {
       const insert = this.db.prepare('INSERT INTO grades(name) VALUES (?)')
       this.db.transaction(() => ['一年级', '二年级', '三年级', '四年级', '五年级', '六年级'].forEach((grade) => insert.run(grade)))()
     }
+    this.db.transaction(() => {
+      const find = this.db.prepare('SELECT id FROM categories WHERE name = ? AND parent_id IS NULL')
+      const insert = this.db.prepare('INSERT INTO categories(parent_id,name) VALUES (?,?)')
+      const findChild = this.db.prepare('SELECT id FROM categories WHERE parent_id = ? AND name = ?')
+      for (const [name, children] of Object.entries(musicCategories)) {
+        const existing = find.get(name) as { id: number } | undefined
+        const id = existing?.id ?? Number(insert.run(null, name).lastInsertRowid)
+        for (const child of children) if (!findChild.get(id, child)) insert.run(id, child)
+      }
+    })()
   }
 
 
