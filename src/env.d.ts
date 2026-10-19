@@ -4,6 +4,8 @@ declare global {
   interface Window {
     musicBank?: {
       questions: {
+        sequence: () => Promise<number>
+        reserveId: () => Promise<string>
         list: () => Promise<QuestionRecord[]>
         save: (question: QuestionRecord) => Promise<QuestionRecord>
         delete: (id: string) => Promise<void>

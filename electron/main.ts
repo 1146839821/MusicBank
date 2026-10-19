@@ -48,6 +48,8 @@ app.whenReady().then(async () => {
     const folder = asset?.assetType === 'audio' ? database.audioPath : database.imagePath
     return assetResponse(request, asset, folder)
   })
+  ipcMain.handle('questions:sequence', () => database.questionSequence())
+  ipcMain.handle('questions:reserve-id', () => database.reserveQuestionId())
   ipcMain.handle('questions:list', () => database.listQuestions())
   ipcMain.handle('questions:save', (_event, question: QuestionRecord) => database.saveQuestion(question))
   ipcMain.handle('questions:delete', (_event, id: string) => database.deleteQuestion(id))
@@ -73,7 +75,7 @@ app.whenReady().then(async () => {
       verifyBackupAssetBytes(record, bytes)
       return { record, bytesBase64: bytes.toString('base64') }
     })
-    const payload: BackupPayload = { format: 'musicbank-backup', version: 1, exportedAt: new Date().toISOString(), questions: database.listQuestions(), papers: database.listPapers(), wrongQuestionIds: database.listWrongQuestionIds(), assets, templates: database.listTemplates(true).map(record => ({record,bytesBase64:database.templateBytes(record.id).toString('base64')})) }
+    const payload: BackupPayload = { questionSequence: database.questionSequence(), format: 'musicbank-backup', version: 1, exportedAt: new Date().toISOString(), questions: database.listQuestions(), papers: database.listPapers(), wrongQuestionIds: database.listWrongQuestionIds(), assets, templates: database.listTemplates(true).map(record => ({record,bytesBase64:database.templateBytes(record.id).toString('base64')})) }
     writeFileSync(result.filePath, JSON.stringify(payload), 'utf8')
     return { canceled: false, filePath: result.filePath, questionCount: payload.questions.length, paperCount: payload.papers.length, assetCount: payload.assets.length }
   })

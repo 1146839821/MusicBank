@@ -87,6 +87,7 @@ export interface PracticeRecord {
 }
 
 export interface BackupPayload {
+  questionSequence?: number
   format: 'musicbank-backup'
   version: 1
   exportedAt: string

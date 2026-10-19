@@ -95,8 +95,33 @@ export class MusicBankDatabase {
         })()
       } finally { this.db.pragma('foreign_keys = ON') }
     }
+    this.initializeQuestionSequence()
     this.backfillPaperAssetReferences()
     this.seedReferenceData()
+  }
+
+  private initializeQuestionSequence() {
+    this.db.transaction(() => {
+      const rows=this.db.prepare('SELECT id FROM questions UNION SELECT question_id AS id FROM paper_items').all() as {id:string|null}[]
+      for(const row of rows)if(row.id)this.advanceQuestionSequence(row.id)
+    }).immediate()
+  }
+
+  private advanceQuestionSequence(id:string) {
+    const match=/^MUS-(\d+)$/.exec(id)
+    const value=match?Number(match[1]):0
+    if(Number.isSafeInteger(value)&&value>(this.getSetting<number>('questions.sequence')||0))this.setSetting('questions.sequence',value)
+  }
+
+  questionSequence() { return this.getSetting<number>('questions.sequence') || 0 }
+
+  reserveQuestionId() {
+    return this.db.transaction(() => {
+      const next=(this.getSetting<number>('questions.sequence')||0)+1
+      if(!Number.isSafeInteger(next))throw new Error('题号已达到上限')
+      this.setSetting('questions.sequence',next)
+      return `MUS-${String(next).padStart(6,'0')}`
+    }).immediate()
   }
 
   private backfillPaperAssetReferences() {
@@ -249,6 +274,7 @@ export class MusicBankDatabase {
       this.db.prepare('DELETE FROM question_asset_refs WHERE question_id = ?').run(question.id)
       const addRef = this.db.prepare('INSERT OR IGNORE INTO question_asset_refs(question_id, asset_id, role) VALUES (?, ?, ?)')
       for (const item of questionAttachments(question)) addRef.run(question.id, item.id, item.assetType === 'audio' ? 'question-audio' : 'question-image')
+      this.advanceQuestionSequence(question.id)
     })
     tx()
     return question
@@ -267,6 +293,7 @@ export class MusicBankDatabase {
       const addAsset = this.db.prepare('INSERT OR IGNORE INTO paper_asset_refs(paper_id, asset_id) VALUES (?, ?)')
       for (const item of paper.items) {
         insert.run(paper.id, item.position, item.questionId, item.score, JSON.stringify(item.snapshot))
+        this.advanceQuestionSequence(item.questionId)
         for (const attachment of questionAttachments(item.snapshot)) addAsset.run(paper.id, attachment.id)
       }
     })
@@ -306,6 +333,7 @@ export class MusicBankDatabase {
       this.clearAllData()
       for (const item of payload.templates || []) this.saveTemplate(item.record, Buffer.from(item.bytesBase64, 'base64'))
       for (const item of payload.assets) this.saveAsset(item.record)
+      if(Number.isSafeInteger(payload.questionSequence)&&payload.questionSequence!>this.questionSequence())this.setSetting('questions.sequence',payload.questionSequence)
       for (const question of payload.questions) this.saveQuestion(question)
       for (const paper of payload.papers) this.savePaper(paper)
       for (const id of payload.wrongQuestionIds) this.upsertWrongQuestion(id)

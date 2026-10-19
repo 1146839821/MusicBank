@@ -3,6 +3,8 @@ import type { ExamAnswerRecord, ExamAttemptRecord, PaperRecord, PracticeRecord, 
 
 contextBridge.exposeInMainWorld('musicBank', {
   questions: {
+    sequence: (): Promise<number> => ipcRenderer.invoke('questions:sequence'),
+    reserveId: (): Promise<string> => ipcRenderer.invoke('questions:reserve-id'),
     list: (): Promise<QuestionRecord[]> => ipcRenderer.invoke('questions:list'),
     save: (question: QuestionRecord): Promise<QuestionRecord> => ipcRenderer.invoke('questions:save', question),
     delete: (id: string): Promise<void> => ipcRenderer.invoke('questions:delete', id),

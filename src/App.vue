@@ -207,13 +207,34 @@ function formatChoiceAnswer(value: string | string[] | undefined) {
   return answerLetters(value).join('、')
 }
 
-const nextQuestionId = computed(() => {
-  const maxId = questions.value.reduce((max, question) => {
-    const numericId = Number(question.id.match(/(\d+)$/)?.[1] || 0)
-    return Math.max(max, numericId)
-  }, 0)
-  return `MUS-${String(maxId + 1).padStart(6, '0')}`
-})
+const storedSequence=Number(window.localStorage.getItem('musicbank.question-sequence'))
+const questionSequence = ref(Number.isSafeInteger(storedSequence)&&storedSequence>=0?storedSequence:0)
+watch(questions, value => {
+  const highest=value.reduce((max,question)=>{const id=Number(/^MUS-(\d+)$/.exec(question.id)?.[1]||0);return Number.isSafeInteger(id)?Math.max(max,id):max},questionSequence.value)
+  questionSequence.value=highest
+  const persist=()=>{
+    const stored=Number(window.localStorage.getItem('musicbank.question-sequence'))
+    const value=Math.max(highest,Number.isSafeInteger(stored)&&stored>=0?stored:0)
+    window.localStorage.setItem('musicbank.question-sequence',String(value))
+    questionSequence.value=Math.max(questionSequence.value,value)
+  }
+  if(!window.musicBank&&navigator.locks)void navigator.locks.request('musicbank-question-id',persist)
+  else persist()
+},{deep:true,immediate:true})
+const nextQuestionId = computed(() => `MUS-${String(questionSequence.value+1).padStart(6,'0')}`)
+async function reserveQuestionId() {
+  const reserveBrowser=()=>{
+    const stored=Number(window.localStorage.getItem('musicbank.question-sequence'))
+    const next=Math.max(questionSequence.value,Number.isSafeInteger(stored)&&stored>=0?stored:0)+1
+    if(!Number.isSafeInteger(next))throw new Error('题号已达到上限')
+    window.localStorage.setItem('musicbank.question-sequence',String(next))
+    return `MUS-${String(next).padStart(6,'0')}`
+  }
+  const id=window.musicBank?await window.musicBank.questions.reserveId():navigator.locks?await navigator.locks.request('musicbank-question-id',reserveBrowser):reserveBrowser()
+  questionSequence.value=Math.max(questionSequence.value,Number(id.slice(4)))
+  return id
+}
+
 const practiceQuestions = computed(() => questions.value.filter((question) => question.status === '已发布' && (studyMode.value === 'sequence' || ((practiceGrade.value === '全部年级' || question.grade === practiceGrade.value) && (practiceCategory.value === '全部分类' || question.category === practiceCategory.value) && (!practiceAudioOnly.value || question.hasAudio)))))
 const practiceCurrent = computed(() => practiceQuestions.value[practiceIndex.value] || practiceQuestions.value[0])
 const examCurrent = computed(() => generatedPaper.value[examIndex.value]?.question)
@@ -274,6 +295,7 @@ onMounted(() => {
         profileForm.userCode = profile.userCode
       } else setupRequired.value = true
     }).catch(() => { setupRequired.value = true })
+    window.musicBank.questions.sequence().then(sequence=>{questionSequence.value=Math.max(questionSequence.value,sequence)}).catch(()=>{ /* allocation still remains authoritative in SQLite */ })
     window.musicBank.questions.list().then((storedQuestions) => {
       questions.value = storedQuestions as Question[]
       if (!storedQuestions.length && hasDemoData) questions.value = demoQuestions.map((question) => ({ ...question }))
@@ -475,9 +497,9 @@ const libraryMutationBusy = ref(false)
 
 async function duplicateQuestion(question: Question) {
   if (libraryMutationBusy.value) return
-  const copy = copyQuestion(question, nextQuestionId.value)
   libraryMutationBusy.value = true
   try {
+    const copy = copyQuestion(question, await reserveQuestionId())
     if (window.musicBank) await window.musicBank.questions.save(copy)
     questions.value.unshift(copy)
     notify(`已复制为 ${copy.id}，请继续完善后发布`)
@@ -592,11 +614,11 @@ const questionSaving = ref(false)
 
 async function persistQuestion(status: Question['status']) {
   if (questionSaving.value || !validateForm()) return false
-  const id = currentSavedId.value || nextQuestionId.value
-  const existingIndex = questions.value.findIndex((item) => item.id === id)
-  const item: Question = { id, title: form.prompt, titleRuns: JSON.parse(JSON.stringify(promptRuns.value)), grade: form.grade, category: form.category, subcategory: form.subcategory, source: form.source, type: questionType.value, status, attachments: JSON.parse(JSON.stringify(attachments.value)), hasAudio: attachments.value.some(item=>item.assetType==='audio'), hasImage: attachments.value.some(item=>item.assetType==='image'), notationDocument: notationDocument.value || undefined, updated: '刚刚', difficulty: form.difficulty, options: optionTexts.value.slice(0, showMore.value ? 6 : 4), correctAnswer: questionType.value === '判断题' ? judgmentAnswer.value : questionType.value === '选择题' ? [...selectedAnswers.value].sort().join(',') : undefined, answerMode: questionType.value === '选择题' ? choiceMode.value : undefined, fillAnswers: form.fillAnswer.split('\n').map((answer) => answer.trim()).filter(Boolean), referenceAnswer: form.shortAnswer, explanation: form.explanation }
   questionSaving.value = true
   try {
+    const id = currentSavedId.value || await reserveQuestionId()
+    const existingIndex = questions.value.findIndex((item) => item.id === id)
+    const item: Question = { id, title: form.prompt, titleRuns: JSON.parse(JSON.stringify(promptRuns.value)), grade: form.grade, category: form.category, subcategory: form.subcategory, source: form.source, type: questionType.value, status, attachments: JSON.parse(JSON.stringify(attachments.value)), hasAudio: attachments.value.some(item=>item.assetType==='audio'), hasImage: attachments.value.some(item=>item.assetType==='image'), notationDocument: notationDocument.value || undefined, updated: '刚刚', difficulty: form.difficulty, options: optionTexts.value.slice(0, showMore.value ? 6 : 4), correctAnswer: questionType.value === '判断题' ? judgmentAnswer.value : questionType.value === '选择题' ? [...selectedAnswers.value].sort().join(',') : undefined, answerMode: questionType.value === '选择题' ? choiceMode.value : undefined, fillAnswers: form.fillAnswer.split('\n').map((answer) => answer.trim()).filter(Boolean), referenceAnswer: form.shortAnswer, explanation: form.explanation }
     if (window.musicBank) await window.musicBank.questions.save(item)
     if (existingIndex >= 0) questions.value[existingIndex] = item
     else questions.value.unshift(item)
