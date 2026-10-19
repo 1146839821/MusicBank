@@ -21,6 +21,7 @@ declare global {
       documents: {
         build: (paperId:string,kind:DocumentKind) => Promise<Uint8Array>
         saveWord: (paperId:string,kind:DocumentKind) => Promise<{canceled:boolean;filePath?:string}>
+        package: (payload:{paperId:string;paperHtml:string;answersHtml:string}) => Promise<{canceled:boolean;filePath?:string}>
         output: (payload:{name:string;html:string;format:'pdf'|'print';pageWidth:number;pageHeight:number}) => Promise<{canceled:boolean;filePath?:string}>
       }
       exams: {

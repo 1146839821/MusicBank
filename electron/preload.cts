@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('musicBank', {
   documents: {
     build: (paperId:string,kind:'paper'|'answers') => ipcRenderer.invoke('documents:build',paperId,kind),
     saveWord: (paperId:string,kind:'paper'|'answers') => ipcRenderer.invoke('documents:save-word',paperId,kind),
+    package: (payload:{paperId:string;paperHtml:string;answersHtml:string}) => ipcRenderer.invoke('documents:package',payload),
     output: (payload:{name:string;html:string;format:'pdf'|'print';pageWidth:number;pageHeight:number}) => ipcRenderer.invoke('documents:output',payload),
   },
   exams: {

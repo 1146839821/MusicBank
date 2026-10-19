@@ -30,6 +30,29 @@ async function preview(){
   finally{if(current===revision)loading.value=false}
 }
 function download(bytes:Uint8Array,name:string){const url=URL.createObjectURL(new Blob([asBuffer(bytes)],{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
+async function offlinePackage(){
+  if(busy.value||loading.value||!window.musicBank)return
+  busy.value=true;error.value='';status.value='正在生成试卷、答案和音频资源包…'
+  const staging=document.createElement('div')
+  staging.className='exam-doc-pages'
+  Object.assign(staging.style,{position:'fixed',left:'-100000px',top:'0',width:'1300px',overflow:'visible',pointerEvents:'none'})
+  staging.setAttribute('aria-hidden','true');document.body.appendChild(staging)
+  try{
+    const html:Partial<Record<DocumentKind,string>>={}
+    for(const type of ['paper','answers'] as const){
+      let bytes=documents.get(type)
+      if(!bytes){bytes=new Uint8Array(await window.musicBank.documents.build(props.paper.id,type));documents.set(type,bytes)}
+      const container=document.createElement('div')
+      staging.replaceChildren(container)
+      await renderAsync(asBuffer(bytes),container,container,{inWrapper:true,ignoreWidth:false,ignoreHeight:false,breakPages:true,ignoreLastRenderedPageBreak:false,useBase64URL:true,renderHeaders:true,renderFooters:true,renderFootnotes:true})
+      await document.fonts.ready
+      await Promise.all(Array.from(container.querySelectorAll('img')).map(image=>image.decode()))
+      paginatePreview(container);html[type]=container.innerHTML
+    }
+    const result=await window.musicBank.documents.package({paperId:props.paper.id,paperHtml:html.paper!,answersHtml:html.answers!})
+    status.value=result.canceled?'已取消导出':'完整离线资源包已保存'
+  }catch(e){error.value=(e as Error).message;status.value=''}finally{staging.remove();busy.value=false}
+}
 async function word(){if(busy.value||loading.value)return;busy.value=true;error.value='';try{if(window.musicBank){const result=await window.musicBank.documents.saveWord(props.paper.id,kind.value);if(!result.canceled)status.value='Word 文档已保存'}else{download(documents.get(kind.value)!,`${props.paper.name}-${kind.value==='paper'?'试卷':'答案'}.docx`);status.value='Word 文档已下载'}}catch(e){error.value=(e as Error).message}finally{busy.value=false}}
 async function output(format:'pdf'|'print'){
   if(busy.value||loading.value||!host.value)return
@@ -47,10 +70,10 @@ onUnmounted(()=>{revision++;document.body.classList.remove('exam-document-open')
 <template>
   <Teleport to="body"><div class="exam-doc-backdrop"><section class="exam-doc-modal" role="dialog" aria-modal="true" aria-labelledby="exam-doc-title">
     <header class="exam-doc-header"><div><span class="eyebrow">考试文档</span><h2 id="exam-doc-title">{{ paper.name }}</h2></div><button class="icon-button" aria-label="关闭考试文档" :disabled="busy" @click="emit('close')">×</button></header>
-    <div class="exam-doc-toolbar"><div class="document-segment"><button :aria-pressed="kind==='paper'" :disabled="busy" @click="kind='paper'">学生试卷</button><button :aria-pressed="kind==='answers'" :disabled="busy" @click="kind='answers'">参考答案</button></div><span>分别保存试卷与答案</span><button class="secondary-button" :disabled="busy||loading||renderFailed" @click="word">下载 Word</button><button class="secondary-button" :disabled="busy||loading||renderFailed" @click="output('pdf')">{{ desktop ? '下载 PDF' : '打印 / 另存 PDF' }}</button><button v-if="desktop" class="primary-button" :disabled="busy||loading||renderFailed" @click="output('print')">打印</button></div>
+    <div class="exam-doc-toolbar"><div class="document-segment"><button :aria-pressed="kind==='paper'" :disabled="busy" @click="kind='paper'">学生试卷</button><button :aria-pressed="kind==='answers'" :disabled="busy" @click="kind='answers'">参考答案</button></div><span>分别保存试卷与答案</span><button class="secondary-button" :disabled="busy||loading||renderFailed" @click="word">下载 Word</button><button class="secondary-button" :disabled="busy||loading||renderFailed" @click="output('pdf')">{{ desktop ? '下载 PDF' : '打印 / 另存 PDF' }}</button><button v-if="desktop" class="secondary-button" :disabled="busy||loading||renderFailed" @click="offlinePackage">连同音频打包 ZIP</button><button v-if="desktop" class="primary-button" :disabled="busy||loading||renderFailed" @click="output('print')">打印</button></div>
     <div v-if="error" role="alert" class="form-error">{{ error }}</div><div v-if="loading" class="document-loading">正在排版文档…</div>
     <div ref="host" class="exam-doc-pages" :class="{pending:loading}"></div>
-    <footer class="exam-doc-footer"><span role="status">{{ busy?'正在处理…':status||'打印预览采用本机字体；复杂文本框请同时核对 Word 原稿。' }}</span><span>{{ summary.pageWidth.toFixed(0) }} × {{ summary.pageHeight.toFixed(0) }} mm</span></footer>
+    <footer class="exam-doc-footer"><span role="status">{{ busy?'正在处理…':status||'Word/PDF 不包含可播放音频；完整 ZIP 包含原始音频、试卷及答案。' }}</span><span>{{ summary.pageWidth.toFixed(0) }} × {{ summary.pageHeight.toFixed(0) }} mm</span></footer>
   </section></div></Teleport>
 </template>
 <style>
