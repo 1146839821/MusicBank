@@ -2,6 +2,11 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { ExamAnswerRecord, ExamAttemptRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile } from './types.js'
 
 contextBridge.exposeInMainWorld('musicBank', {
+  categories: {
+    list:()=>ipcRenderer.invoke('categories:list'),
+    save:(input:{id?:number;parentId:number|null;name:string})=>ipcRenderer.invoke('categories:save',input),
+    reorder:(input:{parentId:number|null;ids:number[]})=>ipcRenderer.invoke('categories:reorder',input),
+  },
   questions: {
     sequence: (): Promise<number> => ipcRenderer.invoke('questions:sequence'),
     reserveId: (): Promise<string> => ipcRenderer.invoke('questions:reserve-id'),

@@ -49,6 +49,9 @@ app.whenReady().then(async () => {
     const folder = asset?.assetType === 'audio' ? database.audioPath : database.imagePath
     return assetResponse(request, asset, folder)
   })
+  ipcMain.handle('categories:list',()=>database.listCategories())
+  ipcMain.handle('categories:save',(_event,input:{id?:number;parentId:number|null;name:string})=>database.saveCategory(input))
+  ipcMain.handle('categories:reorder',(_event,input:{parentId:number|null;ids:number[]})=>database.reorderCategories(input.parentId,input.ids))
   ipcMain.handle('questions:sequence', () => database.questionSequence())
   ipcMain.handle('questions:reserve-id', () => database.reserveQuestionId())
   ipcMain.handle('questions:list', () => database.listQuestions())

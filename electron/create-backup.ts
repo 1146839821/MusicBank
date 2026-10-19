@@ -16,7 +16,7 @@ export function createBackup(database:MusicBankDatabase):BackupPayload {
   })
   const payload:BackupPayload={
     format:'musicbank-backup',version:1,exportedAt:new Date().toISOString(),questionSequence:database.questionSequence(),
-    questions:database.listQuestions(),papers:database.listPapers(),wrongQuestionIds:database.listWrongQuestionIds(),assets,
+    categories:database.listCategories(),questions:database.listQuestions(),papers:database.listPapers(),wrongQuestionIds:database.listWrongQuestionIds(),assets,
     templates:database.listTemplates(true).map(record=>({record,bytesBase64:database.templateBytes(record.id).toString('base64')})),
     exams:database.listExamSessions().map(({attempt,answers})=>({attempt,answers})),
     practiceRecords:database.listPracticeRecords(),wrongRecords:database.listWrongQuestionRecords(),

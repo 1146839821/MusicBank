@@ -2,10 +2,11 @@ import Database from 'better-sqlite3'
 import {validateLearningBackup} from './learning-backup.js'
 import { questionAttachments } from './question-assets.js'
 import { musicCategories } from './music-categories.js'
+import {validateCategories} from './category-catalog.js'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
-import type { BackupPayload, AssetRecord, ExamAnswerRecord, ExamAttemptRecord, ExamSessionRecord, PracticeHistoryRecord, WrongQuestionRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile, PaperTemplateRecord } from './types.js'
+import type { BackupPayload, AssetRecord, ExamAnswerRecord, ExamAttemptRecord, ExamSessionRecord, PracticeHistoryRecord, WrongQuestionRecord, CategoryRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile, PaperTemplateRecord } from './types.js'
 
 type QuestionRow = Omit<QuestionRecord, 'updated' | 'hasAudio' | 'hasImage' | 'options' | 'correctAnswer' | 'fillAnswers' | 'referenceAnswer' | 'audioName' | 'audioDuration' | 'audioAssetId' | 'imageAssetId'> & {
   updated_at: string
@@ -81,7 +82,7 @@ export class MusicBankDatabase {
       CREATE TABLE IF NOT EXISTS paper_templates (id TEXT PRIMARY KEY, metadata_json TEXT NOT NULL, bytes BLOB NOT NULL, archived INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS system_settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
     `)
-    for (const statement of ['ALTER TABLE questions ADD COLUMN attachments_json TEXT', 'ALTER TABLE questions ADD COLUMN title_runs_json TEXT', 'ALTER TABLE questions ADD COLUMN notation_json TEXT', 'ALTER TABLE questions ADD COLUMN has_audio INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE questions ADD COLUMN has_image INTEGER NOT NULL DEFAULT 0', "ALTER TABLE questions ADD COLUMN answer_mode TEXT NOT NULL DEFAULT 'single'"]) {
+    for (const statement of ['ALTER TABLE categories ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE questions ADD COLUMN attachments_json TEXT', 'ALTER TABLE questions ADD COLUMN title_runs_json TEXT', 'ALTER TABLE questions ADD COLUMN notation_json TEXT', 'ALTER TABLE questions ADD COLUMN has_audio INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE questions ADD COLUMN has_image INTEGER NOT NULL DEFAULT 0', "ALTER TABLE questions ADD COLUMN answer_mode TEXT NOT NULL DEFAULT 'single'"]) {
       try { this.db.exec(statement) } catch { /* existing database already has the column */ }
     }
     // Rebuild with foreign keys disabled outside the transaction, retaining all dependent rows.
@@ -99,6 +100,7 @@ export class MusicBankDatabase {
     this.initializeQuestionSequence()
     this.backfillPaperAssetReferences()
     this.seedReferenceData()
+    for(const question of this.listQuestions())this.ensureQuestionCategories(question)
   }
 
   private initializeQuestionSequence() {
@@ -145,6 +147,7 @@ export class MusicBankDatabase {
       const insert = this.db.prepare('INSERT INTO grades(name) VALUES (?)')
       this.db.transaction(() => ['一年级', '二年级', '三年级', '四年级', '五年级', '六年级'].forEach((grade) => insert.run(grade)))()
     }
+    if (this.getSetting<boolean>('categories.initialized')) return
     this.db.transaction(() => {
       const find = this.db.prepare('SELECT id FROM categories WHERE name = ? AND parent_id IS NULL')
       const insert = this.db.prepare('INSERT INTO categories(parent_id,name) VALUES (?,?)')
@@ -154,9 +157,45 @@ export class MusicBankDatabase {
         const id = existing?.id ?? Number(insert.run(null, name).lastInsertRowid)
         for (const child of children) if (!findChild.get(id, child)) insert.run(id, child)
       }
+      const rows=this.db.prepare('SELECT id,parent_id AS parentId FROM categories ORDER BY id').all() as {id:number;parentId:number|null}[]
+      const counters=new Map<number|null,number>()
+      for(const row of rows){const order=counters.get(row.parentId)||0;this.db.prepare('UPDATE categories SET sort_order=? WHERE id=?').run(order,row.id);counters.set(row.parentId,order+1)}
+      this.setSetting('categories.initialized',true)
     })()
   }
 
+  listCategories():CategoryRecord[]{return this.db.prepare('SELECT id,parent_id AS parentId,name,sort_order AS sortOrder FROM categories ORDER BY sort_order,id').all() as CategoryRecord[]}
+
+  saveCategory(input:{id?:number;parentId:number|null;name:string}):CategoryRecord {
+    return this.db.transaction(()=>{
+      const name=String(input.name||'').trim(),records=this.listCategories()
+      const previous=input.id===undefined?undefined:records.find(record=>record.id===input.id)
+      if(input.id!==undefined&&!previous)throw new Error('分类不存在')
+      if(previous&&previous.parentId!==input.parentId)throw new Error('不能改变分类所属层级')
+      const candidate:CategoryRecord={id:input.id??Math.max(0,...records.map(record=>record.id))+1,parentId:input.parentId,name,sortOrder:previous?.sortOrder??Math.max(-1,...records.filter(record=>record.parentId===input.parentId).map(record=>record.sortOrder))+1}
+      validateCategories([...records.filter(record=>record.id!==candidate.id),candidate])
+      if(previous){
+        this.db.prepare('UPDATE categories SET name=? WHERE id=?').run(name,previous.id)
+        const now=new Date().toISOString()
+        if(previous.parentId===null)this.db.prepare('UPDATE questions SET category=?,updated_at=? WHERE category=?').run(name,now,previous.name)
+        else {const parent=records.find(record=>record.id===previous.parentId)!;this.db.prepare('UPDATE questions SET subcategory=?,updated_at=? WHERE category=? AND subcategory=?').run(name,now,parent.name,previous.name)}
+      }else this.db.prepare('INSERT INTO categories(id,parent_id,name,sort_order) VALUES (?,?,?,?)').run(candidate.id,candidate.parentId,candidate.name,candidate.sortOrder)
+      return candidate
+    })()
+  }
+
+  reorderCategories(parentId:number|null,ids:number[]){
+    const siblings=this.listCategories().filter(record=>record.parentId===parentId)
+    if(!Array.isArray(ids)||ids.length!==siblings.length||new Set(ids).size!==ids.length||ids.some(id=>!siblings.some(record=>record.id===id)))throw new Error('排序必须包含全部同级分类')
+    this.db.transaction(()=>{const update=this.db.prepare('UPDATE categories SET sort_order=? WHERE id=?');ids.forEach((id,index)=>update.run(index,id))})()
+  }
+
+  private ensureQuestionCategories(question:QuestionRecord){
+    if(!question.category?.trim())return
+    const records=this.listCategories()
+    const parent=records.find(record=>record.parentId===null&&record.name===question.category)||this.saveCategory({parentId:null,name:question.category})
+    if(question.subcategory?.trim()&&!records.some(record=>record.parentId===parent.id&&record.name===question.subcategory))this.saveCategory({parentId:parent.id,name:question.subcategory})
+  }
 
   getUserProfile(): UserProfile | null {
     const profile = this.getSetting<UserProfile>('user.profile')
@@ -249,6 +288,7 @@ export class MusicBankDatabase {
     if (question.type === '判断题' && !['true','false'].includes(question.correctAnswer || '')) throw new Error('判断题必须选择正确或错误作为标准答案')
     const now = new Date().toISOString()
     const tx = this.db.transaction(() => {
+      this.ensureQuestionCategories(question)
       this.db.prepare(`INSERT INTO questions (id,title,attachments_json,title_runs_json,grade,category,subcategory,type,status,difficulty,source,options_json,correct_answer,answer_mode,fill_answers_json,reference_answer,explanation,audio_name,audio_duration,audio_asset_id,image_asset_id,notation_json,has_audio,has_image,created_at,updated_at)
         VALUES (@id,@title,@attachments_json,@title_runs_json,@grade,@category,@subcategory,@type,@status,@difficulty,@source,@options_json,@correct_answer,@answer_mode,@fill_answers_json,@reference_answer,@explanation,@audio_name,@audio_duration,@audio_asset_id,@image_asset_id,@notation_json,@has_audio,@has_image,COALESCE((SELECT created_at FROM questions WHERE id=@id),@now),@now)
         ON CONFLICT(id) DO UPDATE SET title=excluded.title,attachments_json=excluded.attachments_json,title_runs_json=excluded.title_runs_json,grade=excluded.grade,category=excluded.category,subcategory=excluded.subcategory,type=excluded.type,status=excluded.status,difficulty=excluded.difficulty,source=excluded.source,options_json=excluded.options_json,correct_answer=excluded.correct_answer,answer_mode=excluded.answer_mode,fill_answers_json=excluded.fill_answers_json,reference_answer=excluded.reference_answer,explanation=excluded.explanation,audio_name=excluded.audio_name,audio_duration=excluded.audio_duration,audio_asset_id=excluded.audio_asset_id,image_asset_id=excluded.image_asset_id,notation_json=excluded.notation_json,has_audio=excluded.has_audio,has_image=excluded.has_image,updated_at=excluded.updated_at`).run({
@@ -339,6 +379,13 @@ export class MusicBankDatabase {
     validateLearningBackup(payload)
     this.db.transaction(() => {
       this.clearAllData()
+      if(payload.categories){
+        validateCategories(payload.categories)
+        this.db.exec('DELETE FROM categories WHERE parent_id IS NOT NULL; DELETE FROM categories;')
+        const insert=this.db.prepare('INSERT INTO categories(id,parent_id,name,sort_order) VALUES (?,?,?,?)')
+        for(const record of [...payload.categories.filter(record=>record.parentId===null),...payload.categories.filter(record=>record.parentId!==null)])insert.run(record.id,record.parentId,record.name,record.sortOrder)
+        this.setSetting('categories.initialized',true)
+      }
       for (const item of payload.templates || []) this.saveTemplate(item.record, Buffer.from(item.bytesBase64, 'base64'))
       for (const item of payload.assets) this.saveAsset(item.record)
       if(Number.isSafeInteger(payload.questionSequence)&&payload.questionSequence!>this.questionSequence())this.setSetting('questions.sequence',payload.questionSequence)

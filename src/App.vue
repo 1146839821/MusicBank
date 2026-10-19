@@ -14,10 +14,13 @@ import PaperWorkspace from './components/PaperWorkspace.vue'
 import { copyQuestion } from './question-copy'
 import { judgmentLabel, judgmentCorrect } from './question-answers'
 import NotationEditor from './components/NotationEditor.vue'
-import { musicCategories } from '../electron/music-categories'
+import CategoryManager from './components/CategoryManager.vue'
+import {defaultCategories,orderedCategories} from '../electron/category-catalog'
+import {listCategories} from './category-store'
+import type {CategoryRecord} from '../electron/types'
 import { summarizePractice, type PracticeResponse } from './practice'
 
-type View = 'dashboard' | 'library' | 'add' | 'papers' | 'practice' | 'exam' | 'exam-history' | 'wrong' | 'backup' | 'settings'
+type View = 'dashboard' | 'library' | 'categories' | 'add' | 'papers' | 'practice' | 'exam' | 'exam-history' | 'wrong' | 'backup' | 'settings'
 type QuestionType = '选择题' | '填空题' | '判断题' | '简答题'
 type ChoiceMode = 'single' | 'multiple'
 
@@ -96,13 +99,14 @@ let audioImportRevision = 0
 let imageImportRevision = 0
 const practiceIndex = ref(0)
 const studyMode = ref<'sequence' | 'special'>('sequence')
-const categoryNames = Object.keys(musicCategories)
-const subcategoryNames = computed(() => musicCategories[form.category] || [])
+const categoryRecords=ref<CategoryRecord[]>(defaultCategories())
+const categoryNames=computed(()=>orderedCategories(categoryRecords.value,null).map(record=>record.name))
+const subcategoryNames=computed(()=>{const parent=categoryRecords.value.find(record=>record.parentId===null&&record.name===form.category);return parent?orderedCategories(categoryRecords.value,parent.id).map(record=>record.name):[]})
 watch(() => form.category, () => { form.subcategory = '' }, { flush: 'sync' })
 const practiceGrade = ref('全部年级')
 const practiceCategory = ref('全部分类')
 const practiceAudioOnly = ref(false)
-const practiceCategories = computed(() => [...new Set(questions.value.filter((question) => question.status === '已发布').map((question) => question.category))])
+const practiceCategories = computed(() => categoryNames.value.filter(name=>questions.value.some(question=>question.status==='已发布'&&question.category===name)))
 const practiceAnswer = ref('')
 const practiceChoiceAnswers = ref<string[]>([])
 const practiceSubmitted = ref(false)
@@ -180,7 +184,7 @@ async function exportNotationImage(svg: string) {
 
 
 const navGroups = [
-  { label: '题库管理', items: [{ id: 'dashboard', icon: 'grid', label: '数据首页' }, { id: 'library', icon: 'book', label: '试题管理' }, { id: 'add', icon: 'plus', label: '新增试题', accent: true }, { id: 'papers', icon: 'layers', label: '试卷管理' }, { id: 'papers', icon: 'book', label: '试卷模板' }] },
+  { label: '题库管理', items: [{ id: 'dashboard', icon: 'grid', label: '数据首页' }, { id: 'library', icon: 'book', label: '试题管理' }, { id: 'add', icon: 'plus', label: '新增试题', accent: true }, {id:'categories',icon:'layers',label:'分类管理'}, { id: 'papers', icon: 'layers', label: '试卷管理' }, { id: 'papers', icon: 'book', label: '试卷模板' }] },
   { label: '学习与考试', items: [{ id: 'practice', icon: 'play', label: '顺序练习' }, { id: 'practice', icon: 'spark', label: '专项练习' }, { id: 'papers', icon: 'shuffle', label: '随机组卷' }, { id: 'exam', icon: 'clock', label: '模拟考试' }, { id: 'exam-history', icon: 'clock', label: '考试记录' }, { id: 'wrong', icon: 'bookmark', label: '我的错题' }] },
   { label: '系统', items: [{ id: 'backup', icon: 'archive', label: '数据备份' }, { id: 'settings', icon: 'settings', label: '系统设置' }] },
 ]
@@ -278,6 +282,7 @@ const greetingDate = computed(() => {
 const greetingName = computed(() => userProfile.value?.nickname || '老师')
 
 onMounted(() => {
+  void listCategories().then(records=>{categoryRecords.value=records}).catch(error=>notify(`分类目录读取失败：${String(error)}`))
   clockTimer.value = window.setInterval(() => { currentTime.value = new Date() }, 60_000)
   const savedQuestions = window.localStorage.getItem('musicbank.questions')
   const savedTheme = window.localStorage.getItem('musicbank.theme')
@@ -335,13 +340,28 @@ const filteredQuestions = computed(() => questions.value.filter((q) => {
   return matchesSearch && matchesType && matchesGrade && matchesCategory && matchesAsset
 }))
 
-const pageTitle = computed(() => activeView.value === 'papers' || activeView.value === 'exam' ? activeNavLabel.value : ({ dashboard: '数据首页', library: '试题管理', add: '新增试题', practice: activeNavLabel.value, 'exam-history':'考试记录', wrong: '我的错题', backup: '数据备份', settings: '系统设置' }[activeView.value]))
+const pageTitle = computed(() => activeView.value === 'papers' || activeView.value === 'exam' ? activeNavLabel.value : ({ dashboard: '数据首页', library: '试题管理', categories:'分类管理', add: '新增试题', practice: activeNavLabel.value, 'exam-history':'考试记录', wrong: '我的错题', backup: '数据备份', settings: '系统设置' }[activeView.value]))
+
+function updateCategoryCatalog(next:CategoryRecord[]){
+  const previous=categoryRecords.value
+  const rename=(category:string,subcategory?:string)=>{
+    const root=previous.find(record=>record.parentId===null&&record.name===category)
+    const child=root&&previous.find(record=>record.parentId===root.id&&record.name===subcategory)
+    return {category:next.find(record=>record.id===root?.id)?.name||category,subcategory:next.find(record=>record.id===child?.id)?.name||subcategory}
+  }
+  questions.value=questions.value.map(question=>({...question,...rename(question.category,question.subcategory)}))
+  const edited=rename(form.category,form.subcategory)
+  form.category=edited.category;form.subcategory=edited.subcategory||''
+  libraryCategory.value=rename(libraryCategory.value).category
+  practiceCategory.value=rename(practiceCategory.value).category
+  categoryRecords.value=next
+}
 
 function go(view: View, navLabel?: string) {
   const previousView = activeView.value
   if (previousView === 'exam' && view !== 'exam') { stopExamTimer(); if(!examSubmitted.value) void checkpointExam().catch(()=>{}) }
   activeView.value = view
-  activeNavLabel.value = navLabel || (view === 'add' ? '新增试题' : view === 'library' ? '试题管理' : view === 'practice' ? '顺序练习' : view === 'exam-history' ? '考试记录' : view === 'wrong' ? '我的错题' : view === 'papers' ? '试卷管理' : view === 'backup' ? '数据备份' : view === 'settings' ? '系统设置' : '数据首页')
+  activeNavLabel.value = navLabel || (view === 'add' ? '新增试题' : view === 'library' ? '试题管理' : view === 'categories' ? '分类管理' : view === 'practice' ? '顺序练习' : view === 'exam-history' ? '考试记录' : view === 'wrong' ? '我的错题' : view === 'papers' ? '试卷管理' : view === 'backup' ? '数据备份' : view === 'settings' ? '系统设置' : '数据首页')
   if (view === 'add' && previousView !== 'add') { resetForm(); addStep.value = 1 }
   if (view === 'practice') { studyMode.value = navLabel === '专项练习' ? 'special' : 'sequence'; Object.keys(practiceResponses).forEach((id) => delete practiceResponses[id]); practiceIndex.value = 0; resetPractice() }
   if (view === 'exam') startExam()
@@ -921,6 +941,7 @@ async function importBackup() {
     if (result.canceled) return
     questions.value = await window.musicBank.questions.list()
     savedPapers.value = await window.musicBank.papers.list()
+    categoryRecords.value=await listCategories()
     wrongQuestionIds.value = await window.musicBank.wrong.list()
     activeExamAttemptId.value=null
     examSubmitted.value=false
@@ -983,7 +1004,8 @@ function handleShortcut(event: KeyboardEvent) {
 
         <section v-else-if="activeView === 'library'" class="view library-view"><div class="view-heading"><div><div class="eyebrow">题库管理 / 试题列表</div><h1>试题管理</h1><p>管理、编辑和发布你的音乐学科试题。</p></div><button class="primary-button" @click="go('add')"><svg-icon name="plus" />新增试题</button></div><div class="filter-bar"><div class="filter-search"><svg-icon name="search" /><input v-model="search" placeholder="搜索题号、题干或分类" /></div><select v-model="libraryFilter"><option>全部题型</option><option>选择题</option><option>填空题</option><option>判断题</option><option>简答题</option></select><button class="filter-button" :class="{ selected: showLibraryFilters }" @click="showLibraryFilters = !showLibraryFilters"><svg-icon name="sliders" />筛选</button><div class="view-toggle"><button class="selected"><svg-icon name="list" /></button><button><svg-icon name="grid" /></button></div></div><div v-if="showLibraryFilters" class="advanced-filters"><select v-model="libraryGrade"><option>全部年级</option><option>一年级</option><option>二年级</option><option>三年级</option><option>四年级</option><option>五年级</option><option>六年级</option></select><select v-model="libraryCategory"><option>全部分类</option><option v-for="category in categoryNames" :key="category">{{ category }}</option></select><select v-model="libraryAssetFilter"><option>全部试题</option><option>仅含音频</option><option>仅含图片</option></select><button class="text-button" @click="libraryGrade = '全部年级'; libraryCategory = '全部分类'; libraryAssetFilter = '全部试题'">重置筛选</button></div><div class="table-panel"><div class="table-header"><span>试题信息</span><span>分类</span><span>题型</span><span>状态</span><span>更新于</span><span>操作</span></div><div v-for="q in filteredQuestions" :key="q.id" class="table-row" @click="editQuestion(q)"><div class="question-cell"><div class="question-type" :class="q.type === '选择题' ? 'purple' : q.type === '填空题' ? 'blue' : 'orange'">{{ q.type.slice(0, 1) }}</div><div><strong><QuestionText :text="q.title" :runs="q.titleRuns" /></strong><span>{{ q.id }} · {{ q.grade }} <i v-if="q.hasAudio"><svg-icon name="music" />音频</i><i v-if="q.hasImage"><svg-icon name="image" />图片</i></span></div></div><span class="category-pill">{{ q.category }}</span><span class="type-text">{{ q.type }}</span><span class="status-pill" :class="q.status === '已发布' ? 'published' : 'draft'"><i></i>{{ q.status }}</span><span class="updated">{{ q.updated }}</span><span class="row-actions" @click.stop><button title="编辑" @click="editQuestion(q)"><svg-icon name="edit" /></button><button title="复制" @click="duplicateQuestion(q)"><svg-icon name="copy" /></button><button title="发布或撤回" @click="toggleQuestionStatus(q)"><svg-icon name="check" /></button><button title="删除" @click="deleteQuestion(q)"><svg-icon name="trash" /></button></span></div><div v-if="!filteredQuestions.length" class="empty-state">没有找到匹配的试题</div><div class="table-footer"><span>共 {{ filteredQuestions.length }} 道试题</span><div class="pagination"><button class="active">1</button><button>2</button><button>3</button><span>…</span><button>12</button><button><svg-icon name="chevron" /></button></div></div></div></section>
 
-        <PaperWorkspace v-else-if="activeView === 'papers'" :questions="questions" :papers="savedPapers" :mode="activeNavLabel" @update:papers="savedPapers=$event" @start-exam="openSavedPaper($event); go('exam','模拟考试')" />
+        <CategoryManager v-else-if="activeView === 'categories'" :records="categoryRecords" :questions="questions" @change="updateCategoryCatalog" />
+        <PaperWorkspace v-else-if="activeView === 'papers'" :categories="categoryNames" :questions="questions" :papers="savedPapers" :mode="activeNavLabel" @update:papers="savedPapers=$event" @start-exam="openSavedPaper($event); go('exam','模拟考试')" />
 
         <section v-else-if="activeView === 'add'" class="view add-view"><div class="add-heading"><div><div class="eyebrow">题库管理 / 新增试题</div><h1>{{ currentSavedId ? '编辑试题' : '创建一道新试题' }}</h1><p>把灵感记录下来，建立更有质量的音乐学习内容。</p></div><div class="draft-indicator"><span class="status-dot"></span>{{ questionSaving ? '正在保存…' : '⌘ S 保存草稿' }}</div></div><div class="stepper"><button :class="{ active: addStep === 1, done: addStep > 1 }" @click="addStep = 1"><span>01</span><div><strong>基本信息</strong><small>先定义试题的归属</small></div></button><div class="step-line" :class="{ filled: addStep > 1 }"></div><button :class="{ active: addStep === 2 }" @click="addStep = 2"><span>02</span><div><strong>题目内容</strong><small>录入题干、答案与解析</small></div></button></div>
           <div v-if="addStep === 1" class="form-card"><div class="form-card-heading"><div><h2>基本信息</h2><p>为这道试题选择合适的分类和题型，系统会自动生成唯一题号。</p></div><div class="generated-id">题号 <strong>{{ currentSavedId || nextQuestionId }}</strong></div></div><div class="form-grid"><label class="field"><span>年级 <em>*</em></span><select v-model="form.grade"><option value="">请选择年级</option><option>一年级</option><option>二年级</option><option>三年级</option><option>四年级</option><option>五年级</option><option>六年级</option></select></label><label class="field"><span>一级分类 <em>*</em></span><select v-model="form.category"><option value="">请选择一级分类</option><option v-for="category in categoryNames" :key="category">{{ category }}</option></select></label><label class="field"><span>二级分类 <small>选填</small></span><select v-model="form.subcategory"><option value="">选择二级分类</option><option v-for="subcategory in subcategoryNames" :key="subcategory">{{ subcategory }}</option></select></label><label class="field"><span>试题类型 <em>*</em></span><div class="type-options"><button v-for="type in ['选择题', '填空题', '判断题', '简答题']" :key="type" :class="{ selected: questionType === type }" @click="questionType = type as QuestionType"><span class="radio-dot"></span>{{ type }}</button></div></label><label class="field"><span>难度 <small>选填</small></span><div class="difficulty-options"><button v-for="level in ['基础', '中等', '进阶']" :key="level" :class="{ selected: form.difficulty === level }" @click="form.difficulty = level">{{ level }}</button></div></label><label class="field"><span>试题来源 <small>选填</small></span><input v-model="form.source" placeholder="例如：2025 年省测真题" /></label></div><div class="form-tip"><svg-icon name="info" /><span>题型可以在后续步骤中随时调整，音乐听辨内容可与四种题型自由组合。</span></div><div v-if="formError" class="form-error"><svg-icon name="info" />{{ formError }}</div><div class="form-actions"><button class="ghost-button" @click="go('library')">取消</button><button class="primary-button" @click="form.grade && form.category ? (formError = '', addStep = 2) : (formError = '请先选择年级和一级分类。')">下一步 <svg-icon name="arrow" /></button></div></div>
@@ -1002,7 +1024,7 @@ function handleShortcut(event: KeyboardEvent) {
             <div class="backup-card backup-card-primary"><div class="backup-card-icon"><svg-icon name="archive" /></div><div class="backup-card-copy"><h2>导出备份</h2><p>导出当前 MusicBank 数据。图片和音频会从应用数据文件夹一起打包，不依赖原始文件位置。</p></div><button class="primary-button" :disabled="backupBusy" @click="exportBackup"><svg-icon name="archive" />{{ backupBusy ? '处理中…' : '导出备份' }}</button></div>
             <div class="backup-card"><div class="backup-card-icon blue"><svg-icon name="arrow" /></div><div class="backup-card-copy"><h2>恢复备份</h2><p>从 `.musicbank.json` 文件恢复题库。恢复会替换当前本地数据，并要求输入账户密码确认。</p></div><button class="secondary-button" :disabled="backupBusy" @click="importBackup"><svg-icon name="arrow" />{{ backupBusy ? '处理中…' : '选择备份文件' }}</button></div>
           </div>
-          <div class="panel backup-info-panel"><div class="panel-heading"><div><h2>备份内容</h2><p>文件内包含可继续编辑和练习所需的数据。</p></div><svg-icon name="info" /></div><div class="backup-content-list"><div><span class="backup-check">✓</span><span>试题、答案、解析和音乐记谱符号</span></div><div><span class="backup-check">✓</span><span>已保存试卷、试卷快照与 Word 模板</span></div><div><span class="backup-check">✓</span><span>考试进度、学生答案、成绩和人工批阅评语</span></div><div><span class="backup-check">✓</span><span>练习记录、错题次数及最近出错时间</span></div><div><span class="backup-check">✓</span><span>应用数据文件夹中的图片与 MP3/WAV 音频</span></div></div></div>
+          <div class="panel backup-info-panel"><div class="panel-heading"><div><h2>备份内容</h2><p>文件内包含可继续编辑和练习所需的数据。</p></div><svg-icon name="info" /></div><div class="backup-content-list"><div><span class="backup-check">✓</span><span>试题、答案、解析和音乐记谱符号</span></div><div><span class="backup-check">✓</span><span>分类目录、已保存试卷、试卷快照与 Word 模板</span></div><div><span class="backup-check">✓</span><span>考试进度、学生答案、成绩和人工批阅评语</span></div><div><span class="backup-check">✓</span><span>练习记录、错题次数及最近出错时间</span></div><div><span class="backup-check">✓</span><span>应用数据文件夹中的图片与 MP3/WAV 音频</span></div></div></div>
         </section>
         <section v-else-if="activeView === 'settings'" class="view settings-view">
           <div class="view-heading"><div><div class="eyebrow">系统 / 偏好设置</div><h1>系统设置</h1><p>调整 MusicBank 的显示偏好、本地数据和账户安全。</p></div></div>

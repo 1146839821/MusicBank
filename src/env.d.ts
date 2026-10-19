@@ -1,8 +1,13 @@
-import type { ExamAnswerRecord, ExamAttemptRecord, ExamSessionRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile, PaperTemplateRecord, DocumentKind } from '../electron/types'
+import type { ExamAnswerRecord, ExamAttemptRecord, ExamSessionRecord, CategoryRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile, PaperTemplateRecord, DocumentKind } from '../electron/types'
 
 declare global {
   interface Window {
     musicBank?: {
+      categories: {
+        list:()=>Promise<CategoryRecord[]>
+        save:(input:{id?:number;parentId:number|null;name:string})=>Promise<CategoryRecord>
+        reorder:(input:{parentId:number|null;ids:number[]})=>Promise<void>
+      }
       questions: {
         sequence: () => Promise<number>
         reserveId: () => Promise<string>

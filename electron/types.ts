@@ -94,7 +94,9 @@ export interface PracticeRecord {
 
 export interface PracticeHistoryRecord extends PracticeRecord { createdAt: string }
 export interface WrongQuestionRecord { questionId: string; wrongCount: number; mastered: boolean; lastWrongAt: string }
+export interface CategoryRecord { id:number; parentId:number|null; name:string; sortOrder:number }
 export interface BackupPayload {
+  categories?:CategoryRecord[]
   exams?: Array<Pick<ExamSessionRecord, 'attempt' | 'answers'>>
   practiceRecords?: PracticeHistoryRecord[]
   wrongRecords?: WrongQuestionRecord[]

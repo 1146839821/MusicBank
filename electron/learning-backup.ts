@@ -1,7 +1,9 @@
+import {validateCategories} from './category-catalog.js'
 import type {BackupPayload} from './types.js'
 
 /** Optional extensions keep older version-1 backups importable. Reject broken links before replacing data. */
 export function validateLearningBackup(payload:BackupPayload) {
+  if(payload.categories!==undefined)validateCategories(payload.categories)
   const invalid=(message:string):never=>{throw new Error(`备份学习记录无效：${message}`)}
   const date=(value:unknown)=>typeof value==='string'&&Number.isFinite(Date.parse(value))
   const text=(value:unknown)=>typeof value==='string'&&value.length>0
