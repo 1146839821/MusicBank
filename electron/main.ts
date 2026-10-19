@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { registerDocumentHandlers } from './document-handlers.js'
+import { inspectTemplate } from './paper-documents.js'
 import { restoreBackup } from './restore-backup.js'
 import { isBackupAssetFilename, verifyBackupAssetBytes } from './backup-validation.js'
 import { MusicBankDatabase, createAssetRecord } from './db.js'
@@ -36,6 +38,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   database = new MusicBankDatabase(app.getPath('userData'))
+  registerDocumentHandlers(database)
   protocol.handle('musicbank-asset', async (request) => {
     const id = decodeURIComponent(new URL(request.url).hostname || new URL(request.url).pathname.replace(/^\//, ''))
     const asset = database.findAsset(id)
@@ -68,7 +71,7 @@ app.whenReady().then(() => {
       verifyBackupAssetBytes(record, bytes)
       return { record, bytesBase64: bytes.toString('base64') }
     })
-    const payload: BackupPayload = { format: 'musicbank-backup', version: 1, exportedAt: new Date().toISOString(), questions: database.listQuestions(), papers: database.listPapers(), wrongQuestionIds: database.listWrongQuestionIds(), assets }
+    const payload: BackupPayload = { format: 'musicbank-backup', version: 1, exportedAt: new Date().toISOString(), questions: database.listQuestions(), papers: database.listPapers(), wrongQuestionIds: database.listWrongQuestionIds(), assets, templates: database.listTemplates(true).map(record => ({record,bytesBase64:database.templateBytes(record.id).toString('base64')})) }
     writeFileSync(result.filePath, JSON.stringify(payload), 'utf8')
     return { canceled: false, filePath: result.filePath, questionCount: payload.questions.length, paperCount: payload.papers.length, assetCount: payload.assets.length }
   })
@@ -82,6 +85,11 @@ app.whenReady().then(() => {
       const record = item?.record
       return !record || (record.assetType !== 'audio' && record.assetType !== 'image') || !isBackupAssetFilename(record.storedName) || typeof item.bytesBase64 !== 'string' || (item.bytesBase64.length % 4 !== 0) || !/^[A-Za-z0-9+/]*={0,2}$/.test(item.bytesBase64)
     })) throw new Error('备份文件包含无效的资源数据')
+    if (payload.templates !== undefined && !Array.isArray(payload.templates)) throw new Error('备份模板列表无效')
+    for (const template of payload.templates || []) {
+      if (!template?.record || typeof template.bytesBase64 !== 'string') throw new Error('备份模板无效')
+      template.record.summary = await inspectTemplate(Buffer.from(template.bytesBase64, 'base64'))
+    }
     restoreBackup(database, payload)
     return { canceled: false, filePath: result.filePaths[0], questionCount: payload.questions.length, paperCount: payload.papers.length, assetCount: payload.assets.length }
   })

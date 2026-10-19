@@ -1,4 +1,4 @@
-import type { ExamAnswerRecord, ExamAttemptRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile } from '../electron/types'
+import type { ExamAnswerRecord, ExamAttemptRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile, PaperTemplateRecord, DocumentKind } from '../electron/types'
 
 declare global {
   interface Window {
@@ -12,6 +12,16 @@ declare global {
         save: (paper: PaperRecord) => Promise<string>
         list: () => Promise<PaperRecord[]>
         delete: (id: string) => Promise<void>
+      }
+      templates: {
+        list: () => Promise<PaperTemplateRecord[]>
+        import: (payload:{name:string;bytes:ArrayBuffer}) => Promise<PaperTemplateRecord>
+        delete: (id:string) => Promise<void>
+      }
+      documents: {
+        build: (paperId:string,kind:DocumentKind) => Promise<Uint8Array>
+        saveWord: (paperId:string,kind:DocumentKind) => Promise<{canceled:boolean;filePath?:string}>
+        output: (payload:{name:string;html:string;format:'pdf'|'print';pageWidth:number;pageHeight:number}) => Promise<{canceled:boolean;filePath?:string}>
       }
       exams: {
         start: (attempt: ExamAttemptRecord) => Promise<ExamAttemptRecord>

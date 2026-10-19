@@ -57,11 +57,16 @@
       "uninstallDisplayName": "MusicBank"
     },
     "asar": true,
-    "asarUnpack": ["node_modules/better-sqlite3/**"],
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**"
+    ],
     "npmRebuild": true
   },
   "dependencies": {
     "@vitejs/plugin-vue": "latest",
+    "@xmldom/xmldom": "^0.9.12",
+    "docx-preview": "^0.4.1",
+    "jszip": "^3.10.2",
     "pinia": "^4.1.0",
     "typescript": "~5.8.3",
     "vite": "latest",

@@ -1,4 +1,4 @@
-export type QuestionType = '选择题' | '填空题' | '简答题'
+export type QuestionType = '选择题' | '填空题' | '判断题' | '简答题'
 export type ChoiceMode = 'single' | 'multiple'
 
 export interface UserProfile {
@@ -51,6 +51,9 @@ export interface PaperRecord {
   totalScore: number
   durationMinutes: number
   seed?: string
+  templateSummary?: TemplateSummary
+  templateId?: string
+  examInfo?: ExamInfo
   items: Array<{ position: number; questionId: string; score: number; snapshot: QuestionRecord }>
 }
 
@@ -86,4 +89,30 @@ export interface BackupPayload {
   papers: PaperRecord[]
   wrongQuestionIds: string[]
   assets: Array<{ record: AssetRecord; bytesBase64: string }>
+  templates?: Array<{ record: PaperTemplateRecord; bytesBase64: string }>
 }
+
+export interface ExamInfo {
+  school: string
+  schoolYear: string
+  term: string
+  subject: string
+  examDate: string
+  instructions: string
+}
+export interface TemplateSummary {
+  sectionOrder: QuestionType[]
+  mode: 'sections' | 'placeholder'
+  pageWidth: number
+  pageHeight: number
+  warnings: string[]
+}
+export interface PaperTemplateRecord {
+  id: string
+  name: string
+  importedAt: string
+  fileSize: number
+  summary: TemplateSummary
+  archived?: boolean
+}
+export type DocumentKind = 'paper' | 'answers'

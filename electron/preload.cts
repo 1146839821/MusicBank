@@ -12,6 +12,16 @@ contextBridge.exposeInMainWorld('musicBank', {
     list: (): Promise<PaperRecord[]> => ipcRenderer.invoke('papers:list'),
     delete: (id: string): Promise<void> => ipcRenderer.invoke('papers:delete', id),
   },
+  templates: {
+    list: () => ipcRenderer.invoke('templates:list'),
+    import: (payload: {name:string;bytes:ArrayBuffer}) => ipcRenderer.invoke('templates:import',payload),
+    delete: (id:string) => ipcRenderer.invoke('templates:delete',id),
+  },
+  documents: {
+    build: (paperId:string,kind:'paper'|'answers') => ipcRenderer.invoke('documents:build',paperId,kind),
+    saveWord: (paperId:string,kind:'paper'|'answers') => ipcRenderer.invoke('documents:save-word',paperId,kind),
+    output: (payload:{name:string;html:string;format:'pdf'|'print';pageWidth:number;pageHeight:number}) => ipcRenderer.invoke('documents:output',payload),
+  },
   exams: {
     start: (attempt: ExamAttemptRecord) => ipcRenderer.invoke('exams:start', attempt),
     answer: (answer: ExamAnswerRecord) => ipcRenderer.invoke('exams:answer', answer),

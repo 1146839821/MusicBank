@@ -3,7 +3,7 @@ import { musicCategories } from './music-categories.js'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
-import type { BackupPayload, AssetRecord, ExamAnswerRecord, ExamAttemptRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile } from './types.js'
+import type { BackupPayload, AssetRecord, ExamAnswerRecord, ExamAttemptRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile, PaperTemplateRecord } from './types.js'
 
 type QuestionRow = Omit<QuestionRecord, 'updated' | 'hasAudio' | 'hasImage' | 'options' | 'correctAnswer' | 'fillAnswers' | 'referenceAnswer' | 'audioName' | 'audioDuration' | 'audioAssetId' | 'imageAssetId'> & {
   updated_at: string
@@ -51,7 +51,7 @@ export class MusicBankDatabase {
       CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY AUTOINCREMENT, parent_id INTEGER REFERENCES categories(id), name TEXT NOT NULL, UNIQUE(parent_id, name));
       CREATE TABLE IF NOT EXISTS questions (
         id TEXT PRIMARY KEY, title TEXT NOT NULL, grade TEXT NOT NULL, category TEXT NOT NULL, subcategory TEXT,
-        type TEXT NOT NULL CHECK(type IN ('选择题','填空题','简答题')), status TEXT NOT NULL CHECK(status IN ('已发布','草稿')),
+        type TEXT NOT NULL CHECK(type IN ('选择题','填空题','判断题','简答题')), status TEXT NOT NULL CHECK(status IN ('已发布','草稿')),
         difficulty TEXT NOT NULL, source TEXT, options_json TEXT, correct_answer TEXT, fill_answers_json TEXT,
         reference_answer TEXT, explanation TEXT, audio_name TEXT, audio_duration TEXT, audio_asset_id TEXT, answer_mode TEXT,
         image_asset_id TEXT, notation_json TEXT, has_audio INTEGER NOT NULL DEFAULT 0, has_image INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -74,10 +74,23 @@ export class MusicBankDatabase {
       CREATE TABLE IF NOT EXISTS exam_answers (attempt_id TEXT NOT NULL REFERENCES exam_attempts(id) ON DELETE CASCADE, position INTEGER NOT NULL, answer_json TEXT, score REAL, review_status TEXT, comment TEXT, PRIMARY KEY(attempt_id, position));
       CREATE TABLE IF NOT EXISTS practice_records (id INTEGER PRIMARY KEY AUTOINCREMENT, question_id TEXT NOT NULL REFERENCES questions(id), answer_json TEXT, result TEXT, created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS wrong_questions (question_id TEXT PRIMARY KEY REFERENCES questions(id), wrong_count INTEGER NOT NULL DEFAULT 1, mastered INTEGER NOT NULL DEFAULT 0, last_wrong_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS paper_templates (id TEXT PRIMARY KEY, metadata_json TEXT NOT NULL, bytes BLOB NOT NULL, archived INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS system_settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
     `)
     for (const statement of ['ALTER TABLE questions ADD COLUMN notation_json TEXT', 'ALTER TABLE questions ADD COLUMN has_audio INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE questions ADD COLUMN has_image INTEGER NOT NULL DEFAULT 0', "ALTER TABLE questions ADD COLUMN answer_mode TEXT NOT NULL DEFAULT 'single'"]) {
       try { this.db.exec(statement) } catch { /* existing database already has the column */ }
+    }
+    // Rebuild with foreign keys disabled outside the transaction, retaining all dependent rows.
+    const schema = (this.db.prepare("SELECT sql FROM sqlite_master WHERE name='questions'").get() as {sql:string}).sql
+    if (!schema.includes("'判断题'")) {
+      this.db.pragma('foreign_keys = OFF')
+      try {
+        this.db.transaction(() => {
+          this.db.exec(schema.replace(/^CREATE TABLE\s+(?:"questions"|questions)/i, 'CREATE TABLE questions_next').replace("'填空题','简答题'", "'填空题','判断题','简答题'"))
+          this.db.exec('INSERT INTO questions_next SELECT * FROM questions; DROP TABLE questions; ALTER TABLE questions_next RENAME TO questions; CREATE INDEX idx_questions_filters ON questions(status,grade,category,type);')
+          if ((this.db.pragma('foreign_key_check') as unknown[]).length) throw new Error('题型升级校验失败')
+        })()
+      } finally { this.db.pragma('foreign_keys = ON') }
     }
     this.seedReferenceData()
   }
@@ -187,6 +200,7 @@ export class MusicBankDatabase {
   }
 
   saveQuestion(question: QuestionRecord) {
+    if (question.type === '判断题' && !['true','false'].includes(question.correctAnswer || '')) throw new Error('判断题必须选择正确或错误作为标准答案')
     const now = new Date().toISOString()
     const tx = this.db.transaction(() => {
       this.db.prepare(`INSERT INTO questions (id,title,grade,category,subcategory,type,status,difficulty,source,options_json,correct_answer,answer_mode,fill_answers_json,reference_answer,explanation,audio_name,audio_duration,audio_asset_id,image_asset_id,notation_json,has_audio,has_image,created_at,updated_at)
@@ -225,7 +239,7 @@ export class MusicBankDatabase {
 
   savePaper(paper: PaperRecord) {
     const tx = this.db.transaction(() => {
-      this.db.prepare('INSERT INTO papers(id,name,grade,total_score,duration_minutes,snapshot_json,created_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,grade=excluded.grade,total_score=excluded.total_score,duration_minutes=excluded.duration_minutes,snapshot_json=excluded.snapshot_json').run(paper.id, paper.name, paper.grade, paper.totalScore, paper.durationMinutes, JSON.stringify({ seed: paper.seed, items: paper.items }), new Date().toISOString())
+      this.db.prepare('INSERT INTO papers(id,name,grade,total_score,duration_minutes,snapshot_json,created_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,grade=excluded.grade,total_score=excluded.total_score,duration_minutes=excluded.duration_minutes,snapshot_json=excluded.snapshot_json').run(paper.id, paper.name, paper.grade, paper.totalScore, paper.durationMinutes, JSON.stringify({ seed: paper.seed, items: paper.items, templateId: paper.templateId, templateSummary: paper.templateSummary, examInfo: paper.examInfo }), new Date().toISOString())
       this.db.prepare('DELETE FROM paper_items WHERE paper_id = ?').run(paper.id)
       const insert = this.db.prepare('INSERT INTO paper_items(paper_id,position,question_id,score,snapshot_json) VALUES (?,?,?,?,?)')
       for (const item of paper.items) insert.run(paper.id, item.position, item.questionId, item.score, JSON.stringify(item.snapshot))
@@ -237,10 +251,25 @@ export class MusicBankDatabase {
   listPapers(): PaperRecord[] {
     const rows = this.db.prepare('SELECT id,name,grade,total_score AS totalScore,duration_minutes AS durationMinutes,snapshot_json AS snapshotJson FROM papers ORDER BY created_at DESC').all() as Array<{ id: string; name: string; grade: string; totalScore: number; durationMinutes: number; snapshotJson: string }>
     return rows.map((row) => {
-      const snapshot = JSON.parse(row.snapshotJson) as { seed?: string; items: PaperRecord['items'] }
-      return { id: row.id, name: row.name, grade: row.grade, totalScore: row.totalScore, durationMinutes: row.durationMinutes, seed: snapshot.seed, items: snapshot.items }
+      const snapshot = JSON.parse(row.snapshotJson) as Pick<PaperRecord, 'seed' | 'items' | 'templateId' | 'templateSummary' | 'examInfo'>
+      return { id: row.id, name: row.name, grade: row.grade, totalScore: row.totalScore, durationMinutes: row.durationMinutes, seed: snapshot.seed, items: snapshot.items, templateId: snapshot.templateId, templateSummary: snapshot.templateSummary, examInfo: snapshot.examInfo }
     })
   }
+
+  saveTemplate(record: PaperTemplateRecord, bytes: Uint8Array) {
+    if (!record.id || record.fileSize !== bytes.byteLength || bytes.byteLength > 15 * 1024 * 1024) throw new Error('无效的试卷模板')
+    this.db.prepare('INSERT INTO paper_templates(id,metadata_json,bytes,archived) VALUES (?,?,?,?)').run(record.id, JSON.stringify(record), Buffer.from(bytes), record.archived ? 1 : 0)
+    return record
+  }
+  listTemplates(includeArchived = false): PaperTemplateRecord[] {
+    return (this.db.prepare(`SELECT metadata_json,archived FROM paper_templates ${includeArchived ? '' : 'WHERE archived=0'} ORDER BY rowid DESC`).all() as {metadata_json:string;archived:number}[]).map(row => ({...JSON.parse(row.metadata_json),archived:Boolean(row.archived)}))
+  }
+  templateBytes(id: string): Buffer {
+    const row = this.db.prepare('SELECT bytes FROM paper_templates WHERE id=?').get(id) as {bytes:Buffer}|undefined
+    if (!row) throw new Error('试卷模板不存在，请重新选择模板')
+    return row.bytes
+  }
+  archiveTemplate(id: string) { this.db.prepare('UPDATE paper_templates SET archived=1 WHERE id=?').run(id) }
 
   listAssets(): AssetRecord[] {
     return this.db.prepare('SELECT id, asset_type AS assetType, original_name AS originalName, stored_name AS storedName, mime_type AS mimeType, file_size AS fileSize, sha256, duration_ms AS durationMs FROM assets ORDER BY created_at').all() as AssetRecord[]
@@ -249,6 +278,7 @@ export class MusicBankDatabase {
   restoreBackupRecords(payload: BackupPayload) {
     this.db.transaction(() => {
       this.clearAllData()
+      for (const item of payload.templates || []) this.saveTemplate(item.record, Buffer.from(item.bytesBase64, 'base64'))
       for (const item of payload.assets) this.saveAsset(item.record)
       for (const question of payload.questions) this.saveQuestion(question)
       for (const paper of payload.papers) this.savePaper(paper)
@@ -258,7 +288,7 @@ export class MusicBankDatabase {
 
   clearAllData() {
     const tx = this.db.transaction(() => {
-      this.db.exec('DELETE FROM exam_answers; DELETE FROM exam_attempts; DELETE FROM practice_records; DELETE FROM wrong_questions; DELETE FROM paper_asset_refs; DELETE FROM paper_items; DELETE FROM papers; DELETE FROM question_asset_refs; DELETE FROM questions; DELETE FROM assets;')
+      this.db.exec('DELETE FROM exam_answers; DELETE FROM exam_attempts; DELETE FROM practice_records; DELETE FROM wrong_questions; DELETE FROM paper_asset_refs; DELETE FROM paper_items; DELETE FROM papers; DELETE FROM question_asset_refs; DELETE FROM questions; DELETE FROM assets; DELETE FROM paper_templates;')
     })
     tx()
   }
