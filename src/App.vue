@@ -60,20 +60,20 @@ const showLibraryFilters = ref(false)
 const addStep = ref(1)
 const questionType = ref<QuestionType>('选择题')
 const choiceMode = ref<ChoiceMode>('single')
-const selectedAnswers = ref<string[]>(['B'])
+const selectedAnswers = ref<string[]>([])
 const isPlaying = ref(false)
 const toast = ref('')
 const showMore = ref(false)
 const showQuestionPreview = ref(false)
 const formError = ref('')
 const currentSavedId = ref<string | null>(null)
-const form = reactive({ grade: '', category: '', subcategory: '', difficulty: '基础', source: '', prompt: '请聆听下面的音乐片段，判断其演奏乐器。', explanation: '', fillAnswer: '', shortAnswer: '' })
-const optionTexts = ref(['二胡', '小提琴', '琵琶', '竹笛', '', ''])
+const form = reactive({ grade: '', category: '', subcategory: '', difficulty: '基础', source: '', prompt: '', explanation: '', fillAnswer: '', shortAnswer: '' })
+const optionTexts = ref(['', '', '', '', '', ''])
 const audioInput = ref<HTMLInputElement | null>(null)
 const imageInput = ref<HTMLInputElement | null>(null)
 const audioElement = ref<HTMLAudioElement | null>(null)
 const practiceAudioElement = ref<HTMLAudioElement | null>(null)
-const audioAsset = reactive({ id: '', name: '音乐片段 A', url: '', duration: '01:25', mime: 'MP3' })
+const audioAsset = reactive({ id: '', name: '', url: '', duration: '00:00', mime: '' })
 const imageAsset = ref('')
 const imageAssetId = ref('')
 const practiceIndex = ref(0)
@@ -518,23 +518,23 @@ function resetForm() {
   form.subcategory = ''
   form.difficulty = '基础'
   form.source = ''
-  form.prompt = '请聆听下面的音乐片段，判断其演奏乐器。'
+  form.prompt = ''
   form.explanation = ''
   form.fillAnswer = ''
   form.shortAnswer = ''
-  optionTexts.value = ['二胡', '小提琴', '琵琶', '竹笛', '', '']
+  optionTexts.value = ['', '', '', '', '', '']
   questionType.value = '选择题'
   choiceMode.value = 'single'
-  selectedAnswers.value = ['B']
+  selectedAnswers.value = []
   showMore.value = false
   currentSavedId.value = null
   formError.value = ''
   if (audioAsset.url?.startsWith('blob:')) URL.revokeObjectURL(audioAsset.url)
-  audioAsset.name = '音乐片段 A'
+  audioAsset.name = ''
   audioAsset.id = ''
   audioAsset.url = ''
-  audioAsset.duration = '01:25'
-  audioAsset.mime = 'MP3'
+  audioAsset.duration = '00:00'
+  audioAsset.mime = ''
   if (imageAsset.value?.startsWith('blob:')) URL.revokeObjectURL(imageAsset.value)
   imageAsset.value = ''
   imageAssetId.value = ''
@@ -747,8 +747,12 @@ function validateForm() {
     formError.value = '题目内容不能为空。'
     return false
   }
-  if (questionType.value === '选择题' && (optionTexts.value.slice(0, showMore.value ? 6 : 4).filter(Boolean).length < 2 || !selectedAnswers.value.length)) {
+  if (questionType.value === '选择题' && (optionTexts.value.slice(0, showMore.value ? 6 : 4).filter((option) => option.trim()).length < 2 || !selectedAnswers.value.length)) {
     formError.value = '请至少填写两个选项，并选择正确答案。'
+    return false
+  }
+  if (questionType.value === '选择题' && selectedAnswers.value.some((letter) => !optionTexts.value[letter.charCodeAt(0) - 65]?.trim())) {
+    formError.value = '正确答案对应的选项不能为空。'
     return false
   }
   if (questionType.value === '填空题' && !form.fillAnswer.split('\n').some((answer) => answer.trim())) {
