@@ -80,6 +80,12 @@ export interface ExamAnswerRecord {
   comment?: string
 }
 
+export interface ExamSessionRecord {
+  attempt: ExamAttemptRecord
+  answers: ExamAnswerRecord[]
+  paper: PaperRecord
+}
+
 export interface PracticeRecord {
   questionId: string
   answer: string

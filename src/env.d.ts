@@ -1,4 +1,4 @@
-import type { ExamAnswerRecord, ExamAttemptRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile, PaperTemplateRecord, DocumentKind } from '../electron/types'
+import type { ExamAnswerRecord, ExamAttemptRecord, ExamSessionRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile, PaperTemplateRecord, DocumentKind } from '../electron/types'
 
 declare global {
   interface Window {
@@ -27,9 +27,11 @@ declare global {
         output: (payload:{name:string;html:string;format:'pdf'|'print';pageWidth:number;pageHeight:number}) => Promise<{canceled:boolean;filePath?:string}>
       }
       exams: {
+        list: () => Promise<ExamSessionRecord[]>
+        review: (input:{attemptId:string;position:number;score:number;comment:string}) => Promise<void>
         start: (attempt: ExamAttemptRecord) => Promise<ExamAttemptRecord>
         answer: (answer: ExamAnswerRecord) => Promise<ExamAnswerRecord>
-        finish: (attempt: ExamAttemptRecord) => Promise<ExamAttemptRecord>
+        finish: (attempt: ExamAttemptRecord, answers:ExamAnswerRecord[]) => Promise<ExamAttemptRecord>
       }
       practice: {
         record: (record: PracticeRecord) => Promise<void>

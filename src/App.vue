@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 
+import ExamHistory from './components/ExamHistory.vue'
+import {saveExamProgress,saveExamResponse,finishExam} from './exam-store'
+import type {ExamAttemptRecord,ExamAnswerRecord,ExamSessionRecord,PaperRecord} from '../electron/types'
 import PromptEditor from './components/PromptEditor.vue'
 import QuestionText from './components/QuestionText.vue'
 import QuestionMedia from './components/QuestionMedia.vue'
@@ -14,7 +17,7 @@ import NotationEditor from './components/NotationEditor.vue'
 import { musicCategories } from '../electron/music-categories'
 import { summarizePractice, type PracticeResponse } from './practice'
 
-type View = 'dashboard' | 'library' | 'add' | 'papers' | 'practice' | 'exam' | 'wrong' | 'backup' | 'settings'
+type View = 'dashboard' | 'library' | 'add' | 'papers' | 'practice' | 'exam' | 'exam-history' | 'wrong' | 'backup' | 'settings'
 type QuestionType = '选择题' | '填空题' | '判断题' | '简答题'
 type ChoiceMode = 'single' | 'multiple'
 
@@ -178,7 +181,7 @@ async function exportNotationImage(svg: string) {
 
 const navGroups = [
   { label: '题库管理', items: [{ id: 'dashboard', icon: 'grid', label: '数据首页' }, { id: 'library', icon: 'book', label: '试题管理' }, { id: 'add', icon: 'plus', label: '新增试题', accent: true }, { id: 'papers', icon: 'layers', label: '试卷管理' }, { id: 'papers', icon: 'book', label: '试卷模板' }] },
-  { label: '学习与考试', items: [{ id: 'practice', icon: 'play', label: '顺序练习' }, { id: 'practice', icon: 'spark', label: '专项练习' }, { id: 'papers', icon: 'shuffle', label: '随机组卷' }, { id: 'exam', icon: 'clock', label: '模拟考试' }, { id: 'wrong', icon: 'bookmark', label: '我的错题' }] },
+  { label: '学习与考试', items: [{ id: 'practice', icon: 'play', label: '顺序练习' }, { id: 'practice', icon: 'spark', label: '专项练习' }, { id: 'papers', icon: 'shuffle', label: '随机组卷' }, { id: 'exam', icon: 'clock', label: '模拟考试' }, { id: 'exam-history', icon: 'clock', label: '考试记录' }, { id: 'wrong', icon: 'bookmark', label: '我的错题' }] },
   { label: '系统', items: [{ id: 'backup', icon: 'archive', label: '数据备份' }, { id: 'settings', icon: 'settings', label: '系统设置' }] },
 ]
 
@@ -332,12 +335,13 @@ const filteredQuestions = computed(() => questions.value.filter((q) => {
   return matchesSearch && matchesType && matchesGrade && matchesCategory && matchesAsset
 }))
 
-const pageTitle = computed(() => activeView.value === 'papers' || activeView.value === 'exam' ? activeNavLabel.value : ({ dashboard: '数据首页', library: '试题管理', add: '新增试题', practice: activeNavLabel.value, wrong: '我的错题', backup: '数据备份', settings: '系统设置' }[activeView.value]))
+const pageTitle = computed(() => activeView.value === 'papers' || activeView.value === 'exam' ? activeNavLabel.value : ({ dashboard: '数据首页', library: '试题管理', add: '新增试题', practice: activeNavLabel.value, 'exam-history':'考试记录', wrong: '我的错题', backup: '数据备份', settings: '系统设置' }[activeView.value]))
 
 function go(view: View, navLabel?: string) {
   const previousView = activeView.value
+  if (previousView === 'exam' && view !== 'exam') { stopExamTimer(); if(!examSubmitted.value) void checkpointExam().catch(()=>{}) }
   activeView.value = view
-  activeNavLabel.value = navLabel || (view === 'add' ? '新增试题' : view === 'library' ? '试题管理' : view === 'practice' ? '顺序练习' : view === 'wrong' ? '我的错题' : view === 'papers' ? '试卷管理' : view === 'backup' ? '数据备份' : view === 'settings' ? '系统设置' : '数据首页')
+  activeNavLabel.value = navLabel || (view === 'add' ? '新增试题' : view === 'library' ? '试题管理' : view === 'practice' ? '顺序练习' : view === 'exam-history' ? '考试记录' : view === 'wrong' ? '我的错题' : view === 'papers' ? '试卷管理' : view === 'backup' ? '数据备份' : view === 'settings' ? '系统设置' : '数据首页')
   if (view === 'add' && previousView !== 'add') { resetForm(); addStep.value = 1 }
   if (view === 'practice') { studyMode.value = navLabel === '专项练习' ? 'special' : 'sequence'; Object.keys(practiceResponses).forEach((id) => delete practiceResponses[id]); practiceIndex.value = 0; resetPractice() }
   if (view === 'exam') startExam()
@@ -700,37 +704,73 @@ function normalizeAnswer(value = '') {
   return value.replace(/[\s，。、“”‘’！？!?,.；;:：]/g, '').toLowerCase()
 }
 
+const examSaving=ref(false)
+let examAttemptPaperId:string|null=null
+let examWriteQueue:Promise<unknown>=Promise.resolve()
+function enqueueExamWrite<T>(action:()=>Promise<T>):Promise<T> {
+  const task=examWriteQueue.then(action)
+  examWriteQueue=task.catch(()=>{})
+  return task
+}
+function currentAttempt():ExamAttemptRecord|null {
+  return activeExamAttemptId.value&&activePaperId.value ? {id:activeExamAttemptId.value,paperId:activePaperId.value,status:examSubmitted.value?'已交卷':'进行中',startedAt:examStartedAt.value!,remainingSeconds:Math.max(0,examRemaining.value)} : null
+}
+function currentExamPaper():PaperRecord {
+  return {id:activePaperId.value!,name:paperConfig.name,grade:paperConfig.grade,totalScore:generatedPaper.value.reduce((sum,item)=>sum+item.score,0),durationMinutes:paperConfig.duration,items:generatedPaper.value.map((item,index)=>({position:index+1,questionId:item.question.id,score:item.score,snapshot:JSON.parse(JSON.stringify(item.question))}))}
+}
+async function checkpointExam() {
+  const attempt=currentAttempt()
+  if(!attempt || examSubmitted.value || !generatedPaper.value.length)return
+  const paper=currentExamPaper()
+  try {await enqueueExamWrite(()=>saveExamProgress(attempt,paper))}
+  catch(error){notify(`考试进度保存失败：${String(error)}`);throw error}
+}
+function runExamTimer(){
+  stopExamTimer()
+  examTimer.value=window.setInterval(()=>{
+    if(examSubmitted.value || examSaving.value)return
+    examRemaining.value=Math.max(0,examRemaining.value-1)
+    if(examRemaining.value===0) void submitExam(true)
+    else void checkpointExam().catch(()=>{})
+  },1000)
+}
 async function startExam() {
+  if(examSaving.value)return
   stopExamTimer()
   if (!generatedPaper.value.length) {
     generatedPaper.value = questions.value.filter((question) => question.status === '已发布').slice(0, 10).map((question) => ({ question, score: question.type === '选择题' ? 2 : question.type === '填空题' ? 3 : 10 }))
+    activePaperId.value=null
   }
-  examIndex.value = 0
-  examSubmitted.value = false
-  Object.keys(examAnswers).forEach((key) => delete examAnswers[key])
-  examRemaining.value = Math.max(1, paperConfig.duration) * 60
-  if (!activePaperId.value && generatedPaper.value.length) {
-    try {
-      activePaperId.value = await persistCurrentPaper()
-    } catch {
-      notify('试卷未能保存，暂时无法建立可恢复的考试记录')
-    }
-  }
-  activeExamAttemptId.value = `ATTEMPT-${Date.now()}`
-  examStartedAt.value = new Date().toISOString()
-  activePaperId.value ||= `PAPER-SESSION-${Date.now()}`
-  if (window.musicBank) {
-    try {
-      await window.musicBank.exams.start({ id: activeExamAttemptId.value, paperId: activePaperId.value, status: '进行中', startedAt: examStartedAt.value, remainingSeconds: examRemaining.value })
-    } catch {
-      notify('考试已开始，但考试记录暂时无法保存')
-    }
-  }
-  examTimer.value = window.setInterval(() => {
-    if (examSubmitted.value) return
-    examRemaining.value -= 1
-    if (examRemaining.value <= 0) submitExam(true)
-  }, 1000)
+  if(!generatedPaper.value.length)return
+  examSaving.value=true
+  try {
+    if(!activePaperId.value) await persistCurrentPaper()
+    // Navigation to an active exam keeps its answers; a new attempt is explicit after submission.
+    if(activeExamAttemptId.value && !examSubmitted.value && examAttemptPaperId===activePaperId.value){runExamTimer();return}
+    examIndex.value=0;examSubmitted.value=false
+    Object.keys(examAnswers).forEach(key=>delete examAnswers[key])
+    examRemaining.value=Math.max(1,paperConfig.duration)*60
+    activeExamAttemptId.value=`ATTEMPT-${crypto.randomUUID()}`
+    examAttemptPaperId=activePaperId.value
+    examStartedAt.value=new Date().toISOString()
+    await checkpointExam()
+    runExamTimer()
+  }catch(error){activeExamAttemptId.value=null;notify(`无法开始考试：${String(error)}`)}
+  finally{examSaving.value=false}
+}
+async function resumeExam(session:ExamSessionRecord){
+  if(examSaving.value)return
+  stopExamTimer()
+  openSavedPaper(session.paper as SavedPaper)
+  activeExamAttemptId.value=session.attempt.id;examAttemptPaperId=session.attempt.paperId;examStartedAt.value=session.attempt.startedAt
+  examRemaining.value=session.attempt.remainingSeconds;examSubmitted.value=false
+  Object.keys(examAnswers).forEach(key=>delete examAnswers[key])
+  for(const answer of session.answers){const item=generatedPaper.value[answer.position-1];if(item&&answer.answer!=null)examAnswers[item.question.id]=answer.answer}
+  const unanswered=generatedPaper.value.findIndex(item=>!examAnswers[item.question.id])
+  examIndex.value=unanswered<0?0:unanswered
+  activeView.value='exam';activeNavLabel.value='模拟考试'
+  if(examRemaining.value<=0)await submitExam(true)
+  else runExamTimer()
 }
 
 function stopExamTimer() {
@@ -748,16 +788,15 @@ function formatExamTime(seconds: number) {
 }
 
 function answerExam(value: string) {
-  if (!examCurrent.value || examSubmitted.value) return
+  if (!examCurrent.value || examSubmitted.value || examSaving.value || !activeExamAttemptId.value) return
   examAnswers[examCurrent.value.id] = value
   const position = examIndex.value + 1
-  if (window.musicBank && activeExamAttemptId.value) {
-    void window.musicBank.exams.answer({ attemptId: activeExamAttemptId.value, position, answer: value, reviewStatus: examCurrent.value.type === '简答题' ? '待批阅' : undefined })
-  }
+  const response:ExamAnswerRecord={attemptId:activeExamAttemptId.value,position,answer:value,reviewStatus:examCurrent.value.type==='简答题'?'待批阅':undefined}
+  void enqueueExamWrite(()=>saveExamResponse(response)).catch(error=>notify(`答案保存失败：${String(error)}`))
 }
 
 function toggleExamChoice(letter: string) {
-  if (!examCurrent.value || examSubmitted.value) return
+  if (!examCurrent.value || examSubmitted.value || examSaving.value || !activeExamAttemptId.value) return
   const multiple = examCurrent.value.answerMode === 'multiple' || answerLetters(examCurrent.value.correctAnswer).length > 1
   const current = answerLetters(examAnswers[examCurrent.value.id])
   const next = multiple
@@ -767,24 +806,20 @@ function toggleExamChoice(letter: string) {
 }
 
 async function submitExam(timeout = false) {
-  if (examSubmitted.value) return
-  examSubmitted.value = true
-  stopExamTimer()
-  if (window.musicBank && activeExamAttemptId.value) {
-    for (let index = 0; index < generatedPaper.value.length; index += 1) {
-      const item = generatedPaper.value[index]
-      const answer = examAnswers[item.question.id] || ''
-      const correct = item.question.type === '判断题' ? judgmentCorrect(answer,item.question.correctAnswer) : item.question.type === '选择题'
-        ? choiceAnswersEqual(answer, item.question.correctAnswer)
-        : item.question.type === '填空题'
-          ? (item.question.fillAnswers || []).some((expected) => normalizeAnswer(answer) === normalizeAnswer(expected))
-          : false
-      await window.musicBank.exams.answer({ attemptId: activeExamAttemptId.value, position: index + 1, answer, score: item.question.type === '简答题' ? undefined : correct ? item.score : 0, reviewStatus: item.question.type === '简答题' ? '待批阅' : '已评分' })
-    }
-    await window.musicBank.exams.finish({ id: activeExamAttemptId.value, paperId: activePaperId.value || `PAPER-SESSION-${Date.now()}`, status: '已交卷', startedAt: examStartedAt.value || new Date().toISOString(), submittedAt: new Date().toISOString(), remainingSeconds: examRemaining.value })
-  }
-  if (timeout) notify('考试时间到，系统已自动交卷')
-  else notify('已交卷，客观题成绩已生成')
+  if(examSubmitted.value || examSaving.value || !activeExamAttemptId.value)return
+  examSaving.value=true;stopExamTimer()
+  try {
+    await examWriteQueue
+    const answers:ExamAnswerRecord[]=generatedPaper.value.map((item,index)=>{
+      const answer=examAnswers[item.question.id]||''
+      const correct=item.question.type==='判断题'?judgmentCorrect(answer,item.question.correctAnswer):item.question.type==='选择题'?choiceAnswersEqual(answer,item.question.correctAnswer):item.question.type==='填空题'?(item.question.fillAnswers||[]).some(expected=>normalizeAnswer(answer)===normalizeAnswer(expected)):false
+      return {attemptId:activeExamAttemptId.value!,position:index+1,answer,score:item.question.type==='简答题'?undefined:correct?item.score:0,reviewStatus:item.question.type==='简答题'?'待批阅':'已评分'}
+    })
+    await finishExam({...currentAttempt()!,status:'已交卷',submittedAt:new Date().toISOString()},answers)
+    examSubmitted.value=true
+    notify(timeout?'考试时间到，系统已自动交卷':'已交卷，成绩与答卷已保存到考试记录')
+  }catch(error){notify(`交卷未保存，请重试：${String(error)}`);if(examRemaining.value>0)runExamTimer()}
+  finally{examSaving.value=false}
 }
 
 function nextExamQuestion() {
@@ -826,6 +861,8 @@ watch([practiceGrade, practiceCategory, practiceAudioOnly], () => {
 function clearPaper() { generatedPaper.value=[];activePaperId.value=null;paperError.value='' }
 
 function openSavedPaper(paper: SavedPaper) {
+  stopExamTimer()
+  activeExamAttemptId.value=null
   activePaperId.value = paper.id
   paperConfig.name = paper.name
   paperConfig.grade = paper.grade
@@ -951,7 +988,8 @@ function handleShortcut(event: KeyboardEvent) {
         </section>
         <section v-else-if="activeView === 'practice'" class="view practice-view"><div class="practice-heading"><div><div class="eyebrow">学习与考试 / 顺序练习</div><h1>{{ studyMode === 'special' ? '专项练习' : '顺序练习' }}</h1><p>按题库顺序练习，提交后查看答案和解析。</p></div><div class="practice-progress"><strong>{{ practiceIndex + 1 }}</strong><span>/ {{ practiceQuestions.length || 0 }} 题</span></div></div><div v-if="studyMode === 'special'" class="filter-bar"><select v-model="practiceGrade" aria-label="练习年级"><option>全部年级</option><option v-for="grade in ['一年级','二年级','三年级','四年级','五年级','六年级']" :key="grade">{{ grade }}</option></select><select v-model="practiceCategory" aria-label="练习分类"><option>全部分类</option><option v-for="category in practiceCategories" :key="category">{{ category }}</option></select><button type="button" class="filter-button" :aria-pressed="practiceAudioOnly" @click="practiceAudioOnly = !practiceAudioOnly"><svg-icon name="music" />{{ practiceAudioOnly ? '仅含音频 ✓' : '仅含音频' }}</button></div><div v-if="practiceCurrent" class="practice-layout"><div class="practice-main"><div class="practice-meta"><span class="category-pill">{{ practiceCurrent.grade }}</span><span class="category-pill">{{ practiceCurrent.category }}</span><span class="type-text">{{ practiceCurrent.type }}</span><span class="practice-id">{{ practiceCurrent.id }}</span></div><div class="practice-card"><div class="practice-card-top"><span class="practice-number">{{ String(practiceIndex + 1).padStart(2, '0') }}</span><span v-if="practiceCurrent.hasAudio" class="audio-badge"><svg-icon name="music" />听辨题</span></div><h2><QuestionText :text="practiceCurrent.title" :runs="practiceCurrent.titleRuns" /></h2><QuestionMedia :attachments="practiceAttachments" :missing-image="practiceCurrent.hasImage && !practiceAttachments.some(item=>item.assetType==='image')" :missing-audio="practiceCurrent.hasAudio && !practiceAttachments.some(item=>item.assetType==='audio')" /><div v-if="practiceCurrent.type === '选择题'"><div class="choice-answer-hint">{{ practiceCurrent.answerMode === 'multiple' || answerLetters(practiceCurrent.correctAnswer).length > 1 ? '多选题 · 可选择多个答案' : '单选题 · 请选择一个答案' }}</div><div class="practice-options"><button v-for="(option, index) in (practiceCurrent.options || ['二胡','小提琴','琵琶','竹笛'])" :key="option + index" :class="{ selected: practiceChoiceAnswers.includes(String.fromCharCode(65 + index)), multiple: practiceCurrent.answerMode === 'multiple' || answerLetters(practiceCurrent.correctAnswer).length > 1, correct: practiceSubmitted && answerLetters(practiceCurrent.correctAnswer).includes(String.fromCharCode(65 + index)), incorrect: practiceSubmitted && practiceChoiceAnswers.includes(String.fromCharCode(65 + index)) && !answerLetters(practiceCurrent.correctAnswer).includes(String.fromCharCode(65 + index)) && practiceResult === 'wrong' }" @click="togglePracticeChoice(String.fromCharCode(65 + index))"><span>{{ String.fromCharCode(65 + index) }}</span>{{ option }}</button></div></div><div v-else-if="practiceCurrent.type === '判断题'" class="judgment-options" role="group" aria-label="判断题作答"><button v-for="value in ['true','false']" :key="value" type="button" :disabled="practiceSubmitted" :aria-pressed="practiceAnswer === value" :class="{selected:practiceAnswer === value,correct:practiceSubmitted && practiceCurrent.correctAnswer===value}" @click="practiceAnswer=value">{{ judgmentLabel(value) }}</button></div><textarea v-else-if="practiceCurrent.type === '填空题'" v-model="practiceAnswer" :readonly="practiceSubmitted" class="practice-answer-input" placeholder="请输入答案"></textarea><textarea v-else v-model="practiceAnswer" :readonly="practiceSubmitted" class="practice-answer-input large" placeholder="请输入你的答案，提交后与参考答案对照"></textarea><div v-if="practiceSubmitted" class="practice-feedback" :class="practiceResult"><div class="feedback-icon"><svg-icon :name="practiceResult === 'correct' ? 'check' : practiceResult === 'pending' ? 'info' : 'close'" /></div><div><strong>{{ practiceResult === 'correct' ? '回答正确' : practiceResult === 'pending' ? '请自我核对参考答案' : '再想一想' }}</strong><p v-if="practiceResult === 'wrong'">正确答案：{{ practiceCurrent.type === '判断题' ? judgmentLabel(practiceCurrent.correctAnswer) : practiceCurrent.type === '选择题' ? formatChoiceAnswer(practiceCurrent.correctAnswer) : (practiceCurrent.fillAnswers?.[0] || '参考答案见下方解析') }}</p><p v-else-if="practiceResult === 'pending'">简答题暂不自动评分，请结合参考答案判断是否掌握。</p></div></div><div v-if="practiceSubmitted && (practiceCurrent.explanation || practiceCurrent.referenceAnswer || practiceResult !== 'correct')" class="practice-explanation"><strong>解析</strong><p>{{ practiceCurrent.explanation || practiceCurrent.referenceAnswer || '这道题的解析正在完善中。' }}</p></div></div><div class="practice-actions"><button class="ghost-button" :disabled="practiceIndex === 0" @click="previousPractice"><svg-icon name="chevron-left" />上一题</button><button v-if="!practiceSubmitted" class="primary-button" @click="submitPractice">提交答案 <svg-icon name="arrow" /></button><button v-else class="primary-button" @click="nextPractice">下一题 <svg-icon name="arrow" /></button></div></div><aside class="practice-aside"><div class="aside-card practice-stat-card"><div class="aside-heading"><h3>本次练习</h3><svg-icon name="spark" /></div><div class="practice-score"><strong>{{ practiceSubmitted && practiceResult === 'correct' ? '100' : '—' }}</strong><span>当前得分</span></div><div class="practice-stat-row"><span>已完成</span><b>{{ practiceCompletedCount }} / {{ practiceQuestions.length }}</b></div><div class="practice-stat-row"><span>正确率</span><b>{{ practiceAccuracy }}</b></div></div><div class="aside-card question-map"><div class="aside-heading"><h3>答题卡</h3><span>{{ practiceQuestions.length }} 题</span></div><div class="map-grid"><button v-for="(_, index) in practiceQuestions" :key="index" :class="{ current: index === practiceIndex, answered: Boolean(practiceResponses[practiceQuestions[index].id]) }" @click="practiceIndex = index; resetPractice()">{{ index + 1 }}</button></div></div></aside></div><div v-else class="empty-practice"><div class="placeholder-icon"><svg-icon name="book" /></div><h2>{{ studyMode === 'special' ? '没有符合筛选条件的试题' : '还没有已发布试题' }}</h2><p>请调整筛选条件，或创建并发布试题后再练习。</p><button class="primary-button" @click="go('add')">去新增试题 <svg-icon name="arrow" /></button></div></section>
 
-        <section v-else-if="activeView === 'exam'" class="view exam-view"><div class="exam-topbar"><div><div class="eyebrow">学习与考试 / 模拟考试</div><h1>{{ paperConfig.name }}</h1><p>{{ generatedPaper.length }} 道试题 · 交卷前不显示答案和解析</p></div><div class="exam-timer" :class="{ urgent: examRemaining < 300 }"><svg-icon name="clock" /><strong>{{ formatExamTime(examRemaining) }}</strong><span>剩余时间</span></div><button class="primary-button" :disabled="examSubmitted" @click="submitExam()">{{ examSubmitted ? '已交卷' : '交卷' }} <svg-icon name="check" /></button></div><div v-if="examCurrent" class="exam-layout"><main class="exam-main"><div class="exam-card"><div class="exam-card-head"><span>第 {{ examIndex + 1 }} / {{ generatedPaper.length }} 题</span><span>{{ examCurrent.type }} · {{ generatedPaper[examIndex].score }} 分</span></div><h2><QuestionText :text="examCurrent.title" :runs="examCurrent.titleRuns" /></h2><QuestionMedia :attachments="examAttachments" :missing-image="examCurrent.hasImage && !examAttachments.some(item=>item.assetType==='image')" :missing-audio="examCurrent.hasAudio && !examAttachments.some(item=>item.assetType==='audio')" /><div v-if="examCurrent.type === '选择题'"><div class="choice-answer-hint">{{ examCurrent.answerMode === 'multiple' || answerLetters(examCurrent.correctAnswer).length > 1 ? '多选题 · 可选择多个答案' : '单选题 · 请选择一个答案' }}</div><div class="practice-options"><button v-for="(option, index) in (examCurrent.options || [])" :key="option + index" :class="{ selected: answerLetters(examAnswers[examCurrent.id]).includes(String.fromCharCode(65 + index)), multiple: examCurrent.answerMode === 'multiple' || answerLetters(examCurrent.correctAnswer).length > 1 }" @click="toggleExamChoice(String.fromCharCode(65 + index))"><span>{{ String.fromCharCode(65 + index) }}</span>{{ option }}</button></div></div><div v-else-if="examCurrent.type === '判断题'" class="judgment-options" role="group" aria-label="考试判断题作答"><button v-for="value in ['true','false']" :key="value" type="button" :disabled="examSubmitted" :aria-pressed="examAnswers[examCurrent.id] === value" :class="{selected:examAnswers[examCurrent.id] === value}" @click="answerExam(value)">{{ judgmentLabel(value) }}</button></div><textarea v-else-if="examCurrent.type === '填空题'" class="practice-answer-input" :value="examAnswers[examCurrent.id] || ''" :readonly="examSubmitted" placeholder="请输入答案" @input="answerExam(($event.target as HTMLTextAreaElement).value)"></textarea><textarea v-else class="practice-answer-input large" :value="examAnswers[examCurrent.id] || ''" :readonly="examSubmitted" placeholder="请输入你的答案" @input="answerExam(($event.target as HTMLTextAreaElement).value)"></textarea><div v-if="examSubmitted" class="exam-result"><strong>客观题得分 {{ examScore }} 分</strong><span v-if="generatedPaper.some((item) => item.question.type === '简答题')">简答题待人工阅卷</span><p>参考答案：{{ examCurrent.type === '判断题' ? judgmentLabel(examCurrent.correctAnswer) : examCurrent.type === '选择题' ? formatChoiceAnswer(examCurrent.correctAnswer) : (examCurrent.fillAnswers || []).join('、') || examCurrent.referenceAnswer || '请结合参考答案人工阅卷' }}</p><p v-if="examCurrent.explanation">解析：{{ examCurrent.explanation }}</p></div></div><div class="practice-actions"><button class="ghost-button" :disabled="examIndex === 0" @click="previousExamQuestion"><svg-icon name="chevron-left" />上一题</button><button v-if="!examSubmitted" class="secondary-button" @click="nextExamQuestion">{{ examIndex === generatedPaper.length - 1 ? '检查答题' : '下一题' }} <svg-icon name="arrow" /></button><button v-else class="primary-button" @click="go('dashboard')">返回首页 <svg-icon name="arrow" /></button></div></main><aside class="practice-aside"><div class="aside-card practice-stat-card"><div class="aside-heading"><h3>答题进度</h3><svg-icon name="clock" /></div><div class="practice-score"><strong>{{ Object.keys(examAnswers).length }}</strong><span>/ {{ generatedPaper.length }} 已答</span></div><div class="practice-stat-row"><span>考试状态</span><b>{{ examSubmitted ? '已交卷' : '进行中' }}</b></div><div class="practice-stat-row"><span>考试时长</span><b>{{ paperConfig.duration }} 分钟</b></div></div><div class="aside-card question-map"><div class="aside-heading"><h3>答题卡</h3><span>{{ generatedPaper.length }} 题</span></div><div class="map-grid"><button v-for="(item, index) in generatedPaper" :key="item.question.id" :class="{ current: index === examIndex, answered: Boolean(examAnswers[item.question.id]) }" @click="examIndex = index">{{ index + 1 }}</button></div></div></aside></div><div v-else class="empty-practice"><div class="placeholder-icon"><svg-icon name="layers" /></div><h2>还没有可用试卷</h2><p>请先在随机组卷中生成一份试卷草稿。</p><button class="primary-button" @click="go('papers', '随机组卷')">去随机组卷 <svg-icon name="arrow" /></button></div></section>
+        <ExamHistory v-else-if="activeView === 'exam-history'" @resume="resumeExam" />
+        <section v-else-if="activeView === 'exam'" class="view exam-view"><div class="exam-topbar"><div><div class="eyebrow">学习与考试 / 模拟考试</div><h1>{{ paperConfig.name }}</h1><p>{{ generatedPaper.length }} 道试题 · 交卷前不显示答案和解析</p></div><div class="exam-timer" :class="{ urgent: examRemaining < 300 }"><svg-icon name="clock" /><strong>{{ formatExamTime(examRemaining) }}</strong><span>剩余时间</span></div><button class="primary-button" :disabled="examSubmitted || examSaving" @click="submitExam()">{{ examSubmitted ? '已交卷' : examSaving ? '保存中…' : '交卷' }} <svg-icon name="check" /></button></div><div v-if="examCurrent" class="exam-layout"><main class="exam-main"><div class="exam-card"><div class="exam-card-head"><span>第 {{ examIndex + 1 }} / {{ generatedPaper.length }} 题</span><span>{{ examCurrent.type }} · {{ generatedPaper[examIndex].score }} 分</span></div><h2><QuestionText :text="examCurrent.title" :runs="examCurrent.titleRuns" /></h2><QuestionMedia :attachments="examAttachments" :missing-image="examCurrent.hasImage && !examAttachments.some(item=>item.assetType==='image')" :missing-audio="examCurrent.hasAudio && !examAttachments.some(item=>item.assetType==='audio')" /><div v-if="examCurrent.type === '选择题'"><div class="choice-answer-hint">{{ examCurrent.answerMode === 'multiple' || answerLetters(examCurrent.correctAnswer).length > 1 ? '多选题 · 可选择多个答案' : '单选题 · 请选择一个答案' }}</div><div class="practice-options"><button v-for="(option, index) in (examCurrent.options || [])" :key="option + index" :class="{ selected: answerLetters(examAnswers[examCurrent.id]).includes(String.fromCharCode(65 + index)), multiple: examCurrent.answerMode === 'multiple' || answerLetters(examCurrent.correctAnswer).length > 1 }" @click="toggleExamChoice(String.fromCharCode(65 + index))"><span>{{ String.fromCharCode(65 + index) }}</span>{{ option }}</button></div></div><div v-else-if="examCurrent.type === '判断题'" class="judgment-options" role="group" aria-label="考试判断题作答"><button v-for="value in ['true','false']" :key="value" type="button" :disabled="examSubmitted" :aria-pressed="examAnswers[examCurrent.id] === value" :class="{selected:examAnswers[examCurrent.id] === value}" @click="answerExam(value)">{{ judgmentLabel(value) }}</button></div><textarea v-else-if="examCurrent.type === '填空题'" class="practice-answer-input" :value="examAnswers[examCurrent.id] || ''" :readonly="examSubmitted || examSaving" placeholder="请输入答案" @input="answerExam(($event.target as HTMLTextAreaElement).value)"></textarea><textarea v-else class="practice-answer-input large" :value="examAnswers[examCurrent.id] || ''" :readonly="examSubmitted || examSaving" placeholder="请输入你的答案" @input="answerExam(($event.target as HTMLTextAreaElement).value)"></textarea><div v-if="examSubmitted" class="exam-result"><strong>客观题得分 {{ examScore }} 分</strong><span v-if="generatedPaper.some((item) => item.question.type === '简答题')">简答题待人工阅卷</span><p>参考答案：{{ examCurrent.type === '判断题' ? judgmentLabel(examCurrent.correctAnswer) : examCurrent.type === '选择题' ? formatChoiceAnswer(examCurrent.correctAnswer) : (examCurrent.fillAnswers || []).join('、') || examCurrent.referenceAnswer || '请结合参考答案人工阅卷' }}</p><p v-if="examCurrent.explanation">解析：{{ examCurrent.explanation }}</p></div></div><div class="practice-actions"><button class="ghost-button" :disabled="examIndex === 0" @click="previousExamQuestion"><svg-icon name="chevron-left" />上一题</button><button v-if="!examSubmitted" class="secondary-button" @click="nextExamQuestion">{{ examIndex === generatedPaper.length - 1 ? '检查答题' : '下一题' }} <svg-icon name="arrow" /></button><button v-else class="primary-button" @click="go('dashboard')">返回首页 <svg-icon name="arrow" /></button></div></main><aside class="practice-aside"><div class="aside-card practice-stat-card"><div class="aside-heading"><h3>答题进度</h3><svg-icon name="clock" /></div><div class="practice-score"><strong>{{ Object.keys(examAnswers).length }}</strong><span>/ {{ generatedPaper.length }} 已答</span></div><div class="practice-stat-row"><span>考试状态</span><b>{{ examSubmitted ? '已交卷' : '进行中' }}</b></div><div class="practice-stat-row"><span>考试时长</span><b>{{ paperConfig.duration }} 分钟</b></div></div><div class="aside-card question-map"><div class="aside-heading"><h3>答题卡</h3><span>{{ generatedPaper.length }} 题</span></div><div class="map-grid"><button v-for="(item, index) in generatedPaper" :key="item.question.id" :class="{ current: index === examIndex, answered: Boolean(examAnswers[item.question.id]) }" @click="examIndex = index">{{ index + 1 }}</button></div></div></aside></div><div v-else class="empty-practice"><div class="placeholder-icon"><svg-icon name="layers" /></div><h2>还没有可用试卷</h2><p>请先在随机组卷中生成一份试卷草稿。</p><button class="primary-button" @click="go('papers', '随机组卷')">去随机组卷 <svg-icon name="arrow" /></button></div></section>
 
         <section v-else-if="activeView === 'wrong'" class="view wrong-view"><div class="view-heading"><div><div class="eyebrow">学习与考试 / 错题复习</div><h1>我的错题</h1><p>复习做错的题目，保留图片和音频引用。</p></div><div class="paper-status"><span class="status-dot"></span>{{ wrongQuestions.length }} 道待复习</div></div><div v-if="wrongQuestions.length" class="wrong-list"><div v-for="question in wrongQuestions" :key="question.id" class="wrong-item"><div class="question-type" :class="question.type === '选择题' ? 'purple' : question.type === '填空题' ? 'blue' : 'orange'">{{ question.type.slice(0, 1) }}</div><div class="wrong-copy"><strong>{{ question.title }}</strong><span>{{ question.id }} · {{ question.grade }} · {{ question.category }}<i v-if="question.hasAudio"><svg-icon name="music" />音频</i><i v-if="question.hasImage"><svg-icon name="image" />图片</i></span></div><button class="secondary-button" @click="reviewWrong(question)">重新练习</button><button class="icon-button" title="移出错题本" @click="removeWrong(question)"><svg-icon name="close" /></button></div></div><div v-else class="empty-practice wrong-empty"><h2>暂时没有错题</h2><p>练习中答错的题目会自动出现在这里。</p><button class="primary-button" @click="go('practice', '顺序练习')">开始练习 <svg-icon name="arrow" /></button></div></section>
 

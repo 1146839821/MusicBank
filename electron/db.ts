@@ -4,7 +4,7 @@ import { musicCategories } from './music-categories.js'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
-import type { BackupPayload, AssetRecord, ExamAnswerRecord, ExamAttemptRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile, PaperTemplateRecord } from './types.js'
+import type { BackupPayload, AssetRecord, ExamAnswerRecord, ExamAttemptRecord, ExamSessionRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile, PaperTemplateRecord } from './types.js'
 
 type QuestionRow = Omit<QuestionRecord, 'updated' | 'hasAudio' | 'hasImage' | 'options' | 'correctAnswer' | 'fillAnswers' | 'referenceAnswer' | 'audioName' | 'audioDuration' | 'audioAssetId' | 'imageAssetId'> & {
   updated_at: string
@@ -285,6 +285,12 @@ export class MusicBankDatabase {
   }
 
   savePaper(paper: PaperRecord) {
+    if (this.db.prepare('SELECT 1 FROM exam_attempts WHERE paper_id=? LIMIT 1').get(paper.id)) {
+      const previous=this.listPapers().find(item=>item.id===paper.id)
+      const comparable=(value:PaperRecord|undefined)=>value&&JSON.stringify([value.name,value.grade,value.totalScore,value.durationMinutes,value.seed,value.items,value.templateId,value.templateSummary,value.examInfo])
+      if (comparable(previous)!==comparable(paper)) throw new Error('此试卷已有考试记录，请另存为新试卷以保留原始答卷')
+      return paper.id
+    }
     const tx = this.db.transaction(() => {
       this.db.prepare('INSERT INTO papers(id,name,grade,total_score,duration_minutes,snapshot_json,created_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,grade=excluded.grade,total_score=excluded.total_score,duration_minutes=excluded.duration_minutes,snapshot_json=excluded.snapshot_json').run(paper.id, paper.name, paper.grade, paper.totalScore, paper.durationMinutes, JSON.stringify({ seed: paper.seed, items: paper.items, templateId: paper.templateId, templateSummary: paper.templateSummary, examInfo: paper.examInfo }), new Date().toISOString())
       this.db.prepare('DELETE FROM paper_items WHERE paper_id = ?').run(paper.id)
@@ -351,7 +357,41 @@ export class MusicBankDatabase {
     this.db.prepare('DELETE FROM papers WHERE id = ?').run(id)
   }
 
+  listExamSessions(): ExamSessionRecord[] {
+    const attempts = this.db.prepare('SELECT id,paper_id AS paperId,status,started_at AS startedAt,submitted_at AS submittedAt,remaining_seconds AS remainingSeconds FROM exam_attempts ORDER BY started_at DESC,id DESC').all() as ExamAttemptRecord[]
+    const papers = this.listPapers()
+    return attempts.flatMap(attempt => {
+      const paper = papers.find(item=>item.id===attempt.paperId)
+      if (!paper) return []
+      const rows = this.db.prepare('SELECT attempt_id AS attemptId,position,answer_json AS answerJson,score,review_status AS reviewStatus,comment FROM exam_answers WHERE attempt_id=? ORDER BY position').all(attempt.id) as Array<ExamAnswerRecord & {answerJson:string|null}>
+      return [{attempt, paper, answers:rows.map(({answerJson,...row})=>({...row,answer:answerJson===null?undefined:JSON.parse(answerJson)}))}]
+    })
+  }
+
+  finishExam(attempt: ExamAttemptRecord, answers: ExamAnswerRecord[]) {
+    return this.db.transaction(()=> {
+      const existing=this.listExamSessions().find(session=>session.attempt.id===attempt.id)
+      if (!existing || existing.attempt.status!=='进行中') throw new Error('考试不存在或已经交卷')
+      if (answers.length!==existing.paper.items.length || answers.some((answer,index)=>answer.attemptId!==attempt.id || answer.position!==index+1)) throw new Error('答卷不完整')
+      for (const answer of answers) this.saveExamAnswer(answer)
+      return this.saveExamAttempt({...existing.attempt,status:'已交卷',submittedAt:new Date().toISOString(),remainingSeconds:attempt.remainingSeconds})
+    })()
+  }
+
+  reviewExamAnswer(attemptId:string, position:number, score:number, comment:string) {
+    const session=this.listExamSessions().find(session=>session.attempt.id===attemptId)
+    const item=session?.paper.items.find(item=>item.position===position)
+    const answer=session?.answers.find(answer=>answer.position===position)
+    if (!session || session.attempt.status!=='已交卷' || !item || !answer || item.snapshot.type!=='简答题') throw new Error('只能批阅已交卷的简答题')
+    if (!Number.isFinite(score) || score<0 || score>item.score) throw new Error(`分数应在 0 至 ${item.score} 之间`)
+    this.db.prepare('UPDATE exam_answers SET score=?,review_status=?,comment=? WHERE attempt_id=? AND position=?').run(score,'已评分',comment,attemptId,position)
+  }
+
   saveExamAttempt(attempt: ExamAttemptRecord) {
+    if (!Number.isInteger(attempt.remainingSeconds) || attempt.remainingSeconds<0) throw new Error('剩余时间无效')
+    const existing=this.db.prepare('SELECT status,paper_id AS paperId,started_at AS startedAt FROM exam_attempts WHERE id=?').get(attempt.id) as {status:string;paperId:string;startedAt:string}|undefined
+    if (existing?.status==='已交卷') throw new Error('已交卷的考试不可重新开始')
+    if (existing && (existing.paperId!==attempt.paperId || existing.startedAt!==attempt.startedAt)) throw new Error('考试身份与原始记录不一致')
     this.db.prepare(`INSERT INTO exam_attempts(id,paper_id,status,started_at,submitted_at,remaining_seconds)
       VALUES (?,?,?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET status=excluded.status,submitted_at=excluded.submitted_at,remaining_seconds=excluded.remaining_seconds`)
@@ -360,6 +400,8 @@ export class MusicBankDatabase {
   }
 
   saveExamAnswer(answer: ExamAnswerRecord) {
+    const attempt=this.db.prepare('SELECT status FROM exam_attempts WHERE id=?').get(answer.attemptId) as {status:string}|undefined
+    if (!attempt || attempt.status!=='进行中') throw new Error('已交卷或不存在的考试不可作答')
     this.db.prepare(`INSERT INTO exam_answers(attempt_id,position,answer_json,score,review_status,comment)
       VALUES (?,?,?,?,?,?)
       ON CONFLICT(attempt_id,position) DO UPDATE SET answer_json=excluded.answer_json,score=excluded.score,review_status=excluded.review_status,comment=excluded.comment`)

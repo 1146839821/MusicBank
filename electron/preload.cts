@@ -26,9 +26,11 @@ contextBridge.exposeInMainWorld('musicBank', {
     output: (payload:{name:string;html:string;format:'pdf'|'print';pageWidth:number;pageHeight:number}) => ipcRenderer.invoke('documents:output',payload),
   },
   exams: {
+    list: () => ipcRenderer.invoke('exams:list'),
+    review: (input:{attemptId:string;position:number;score:number;comment:string}) => ipcRenderer.invoke('exams:review',input),
     start: (attempt: ExamAttemptRecord) => ipcRenderer.invoke('exams:start', attempt),
     answer: (answer: ExamAnswerRecord) => ipcRenderer.invoke('exams:answer', answer),
-    finish: (attempt: ExamAttemptRecord) => ipcRenderer.invoke('exams:finish', attempt),
+    finish: (attempt: ExamAttemptRecord, answers:ExamAnswerRecord[]) => ipcRenderer.invoke('exams:finish', attempt, answers),
   },
   practice: {
     record: (record: PracticeRecord) => ipcRenderer.invoke('practice:record', record),
