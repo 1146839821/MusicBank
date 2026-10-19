@@ -70,6 +70,32 @@ describe('MusicBankDatabase', () => {
     database.close()
   })
 
+  it('persists multiple-choice answers and answer mode', () => {
+    const root = mkdtempSync(join(tmpdir(), 'musicbank-test-'))
+    roots.push(root)
+    const database = new MusicBankDatabase(root)
+    database.saveQuestion({
+      id: 'MUS-TEST-MULTI',
+      title: '下列哪些属于打击乐器？',
+      grade: '五年级',
+      category: '民族、西洋乐器',
+      type: '选择题',
+      status: '已发布',
+      hasAudio: false,
+      hasImage: false,
+      updated: '刚刚',
+      difficulty: '基础',
+      options: ['鼓', '小提琴', '锣', '长笛'],
+      correctAnswer: 'A,C',
+      answerMode: 'multiple',
+    })
+
+    const [question] = database.listQuestions()
+    expect(question.correctAnswer).toBe('A,C')
+    expect(question.answerMode).toBe('multiple')
+    database.close()
+  })
+
   it('persists exam attempts, answers, practice records and deduplicated wrong questions', () => {
     const root = mkdtempSync(join(tmpdir(), 'musicbank-test-'))
     roots.push(root)

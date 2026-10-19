@@ -1,4 +1,5 @@
 export type QuestionType = '选择题' | '填空题' | '简答题'
+export type ChoiceMode = 'single' | 'multiple'
 
 export interface UserProfile {
   username: string
@@ -21,6 +22,7 @@ export interface QuestionRecord {
   source?: string
   options?: string[]
   correctAnswer?: string
+  answerMode?: ChoiceMode
   fillAnswers?: string[]
   referenceAnswer?: string
   explanation?: string

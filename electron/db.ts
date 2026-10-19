@@ -14,6 +14,7 @@ type QuestionRow = Omit<QuestionRecord, 'updated' | 'hasAudio' | 'hasImage' | 'o
   audio_duration?: string
   audio_asset_id?: string
   image_asset_id?: string
+  answer_mode?: 'single' | 'multiple'
   has_audio?: number
   has_image?: number
 }
@@ -50,7 +51,7 @@ export class MusicBankDatabase {
         id TEXT PRIMARY KEY, title TEXT NOT NULL, grade TEXT NOT NULL, category TEXT NOT NULL, subcategory TEXT,
         type TEXT NOT NULL CHECK(type IN ('选择题','填空题','简答题')), status TEXT NOT NULL CHECK(status IN ('已发布','草稿')),
         difficulty TEXT NOT NULL, source TEXT, options_json TEXT, correct_answer TEXT, fill_answers_json TEXT,
-        reference_answer TEXT, explanation TEXT, audio_name TEXT, audio_duration TEXT, audio_asset_id TEXT,
+        reference_answer TEXT, explanation TEXT, audio_name TEXT, audio_duration TEXT, audio_asset_id TEXT, answer_mode TEXT,
         image_asset_id TEXT, has_audio INTEGER NOT NULL DEFAULT 0, has_image INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_questions_filters ON questions(status, grade, category, type);
@@ -73,7 +74,7 @@ export class MusicBankDatabase {
       CREATE TABLE IF NOT EXISTS wrong_questions (question_id TEXT PRIMARY KEY REFERENCES questions(id), wrong_count INTEGER NOT NULL DEFAULT 1, mastered INTEGER NOT NULL DEFAULT 0, last_wrong_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS system_settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
     `)
-    for (const statement of ['ALTER TABLE questions ADD COLUMN has_audio INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE questions ADD COLUMN has_image INTEGER NOT NULL DEFAULT 0']) {
+    for (const statement of ['ALTER TABLE questions ADD COLUMN has_audio INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE questions ADD COLUMN has_image INTEGER NOT NULL DEFAULT 0', "ALTER TABLE questions ADD COLUMN answer_mode TEXT NOT NULL DEFAULT 'single'"]) {
       try { this.db.exec(statement) } catch { /* existing database already has the column */ }
     }
     this.seedReferenceData()
@@ -161,6 +162,7 @@ export class MusicBankDatabase {
       source: row.source,
       options: row.options_json ? JSON.parse(row.options_json) : undefined,
       correctAnswer: row.correct_answer,
+      answerMode: row.answer_mode === 'multiple' ? 'multiple' : 'single',
       fillAnswers: row.fill_answers_json ? JSON.parse(row.fill_answers_json) : undefined,
       referenceAnswer: row.reference_answer,
       explanation: row.explanation,
@@ -174,15 +176,16 @@ export class MusicBankDatabase {
   saveQuestion(question: QuestionRecord) {
     const now = new Date().toISOString()
     const tx = this.db.transaction(() => {
-      this.db.prepare(`INSERT INTO questions (id,title,grade,category,subcategory,type,status,difficulty,source,options_json,correct_answer,fill_answers_json,reference_answer,explanation,audio_name,audio_duration,audio_asset_id,image_asset_id,has_audio,has_image,created_at,updated_at)
-        VALUES (@id,@title,@grade,@category,@subcategory,@type,@status,@difficulty,@source,@options_json,@correct_answer,@fill_answers_json,@reference_answer,@explanation,@audio_name,@audio_duration,@audio_asset_id,@image_asset_id,@has_audio,@has_image,COALESCE((SELECT created_at FROM questions WHERE id=@id),@now),@now)
-        ON CONFLICT(id) DO UPDATE SET title=excluded.title,grade=excluded.grade,category=excluded.category,subcategory=excluded.subcategory,type=excluded.type,status=excluded.status,difficulty=excluded.difficulty,source=excluded.source,options_json=excluded.options_json,correct_answer=excluded.correct_answer,fill_answers_json=excluded.fill_answers_json,reference_answer=excluded.reference_answer,explanation=excluded.explanation,audio_name=excluded.audio_name,audio_duration=excluded.audio_duration,audio_asset_id=excluded.audio_asset_id,image_asset_id=excluded.image_asset_id,has_audio=excluded.has_audio,has_image=excluded.has_image,updated_at=excluded.updated_at`).run({
+      this.db.prepare(`INSERT INTO questions (id,title,grade,category,subcategory,type,status,difficulty,source,options_json,correct_answer,answer_mode,fill_answers_json,reference_answer,explanation,audio_name,audio_duration,audio_asset_id,image_asset_id,has_audio,has_image,created_at,updated_at)
+        VALUES (@id,@title,@grade,@category,@subcategory,@type,@status,@difficulty,@source,@options_json,@correct_answer,@answer_mode,@fill_answers_json,@reference_answer,@explanation,@audio_name,@audio_duration,@audio_asset_id,@image_asset_id,@has_audio,@has_image,COALESCE((SELECT created_at FROM questions WHERE id=@id),@now),@now)
+        ON CONFLICT(id) DO UPDATE SET title=excluded.title,grade=excluded.grade,category=excluded.category,subcategory=excluded.subcategory,type=excluded.type,status=excluded.status,difficulty=excluded.difficulty,source=excluded.source,options_json=excluded.options_json,correct_answer=excluded.correct_answer,answer_mode=excluded.answer_mode,fill_answers_json=excluded.fill_answers_json,reference_answer=excluded.reference_answer,explanation=excluded.explanation,audio_name=excluded.audio_name,audio_duration=excluded.audio_duration,audio_asset_id=excluded.audio_asset_id,image_asset_id=excluded.image_asset_id,has_audio=excluded.has_audio,has_image=excluded.has_image,updated_at=excluded.updated_at`).run({
         ...question,
         subcategory: question.subcategory || null,
         source: question.source || null,
         options_json: question.options ? JSON.stringify(question.options) : null,
         fill_answers_json: question.fillAnswers ? JSON.stringify(question.fillAnswers) : null,
         correct_answer: question.correctAnswer || null,
+        answer_mode: question.answerMode || 'single',
         reference_answer: question.referenceAnswer || null,
         explanation: question.explanation || null,
         audio_name: question.audioName || null,
