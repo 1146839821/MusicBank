@@ -1,8 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session } from 'electron'
 import { createHash } from 'node:crypto'
-import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { restoreBackup } from './restore-backup.js'
 import { isBackupAssetFilename } from './backup-validation.js'
 import { MusicBankDatabase, createAssetRecord } from './db.js'
 import type { AssetRecord, BackupPayload, ExamAnswerRecord, ExamAttemptRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile } from './types.js'
@@ -78,21 +79,7 @@ app.whenReady().then(() => {
       const record = item?.record
       return !record || (record.assetType !== 'audio' && record.assetType !== 'image') || !isBackupAssetFilename(record.storedName) || typeof item.bytesBase64 !== 'string' || (item.bytesBase64.length % 4 !== 0) || !/^[A-Za-z0-9+/]*={0,2}$/.test(item.bytesBase64)
     })) throw new Error('备份文件包含无效的资源数据')
-    database.clearAllData()
-    for (const folder of [database.audioPath, database.imagePath]) {
-      for (const name of readdirSync(folder)) unlinkSync(join(folder, name))
-    }
-    for (const item of payload.assets) {
-      const record = item.record as AssetRecord
-      const folder = record.assetType === 'audio' ? database.audioPath : database.imagePath
-      const storedName = basename(record.storedName)
-      if (!storedName || storedName !== record.storedName) throw new Error('备份文件包含无效的资源文件名')
-      if (item.bytesBase64) writeFileSync(join(folder, storedName), Buffer.from(item.bytesBase64, 'base64'))
-      database.saveAsset(record)
-    }
-    for (const question of payload.questions) database.saveQuestion(question as QuestionRecord)
-    for (const paper of payload.papers) database.savePaper(paper as PaperRecord)
-    for (const questionId of payload.wrongQuestionIds || []) database.upsertWrongQuestion(questionId)
+    restoreBackup(database, payload)
     return { canceled: false, filePath: result.filePaths[0], questionCount: payload.questions.length, paperCount: payload.papers.length, assetCount: payload.assets.length }
   })
 

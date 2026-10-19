@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
-import type { AssetRecord, ExamAnswerRecord, ExamAttemptRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile } from './types.js'
+import type { BackupPayload, AssetRecord, ExamAnswerRecord, ExamAttemptRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile } from './types.js'
 
 type QuestionRow = Omit<QuestionRecord, 'updated' | 'hasAudio' | 'hasImage' | 'options' | 'correctAnswer' | 'fillAnswers' | 'referenceAnswer' | 'audioName' | 'audioDuration' | 'audioAssetId' | 'imageAssetId'> & {
   updated_at: string
@@ -230,6 +230,16 @@ export class MusicBankDatabase {
 
   listAssets(): AssetRecord[] {
     return this.db.prepare('SELECT id, asset_type AS assetType, original_name AS originalName, stored_name AS storedName, mime_type AS mimeType, file_size AS fileSize, sha256, duration_ms AS durationMs FROM assets ORDER BY created_at').all() as AssetRecord[]
+  }
+
+  restoreBackupRecords(payload: BackupPayload) {
+    this.db.transaction(() => {
+      this.clearAllData()
+      for (const item of payload.assets) this.saveAsset(item.record)
+      for (const question of payload.questions) this.saveQuestion(question)
+      for (const paper of payload.papers) this.savePaper(paper)
+      for (const id of payload.wrongQuestionIds) this.upsertWrongQuestion(id)
+    })()
   }
 
   clearAllData() {
