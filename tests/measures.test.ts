@@ -41,4 +41,21 @@ describe('automatic measures and compact staff signatures',()=>{
     expect(upper[4].x).toBe(lower[2].x);expect(layout.bars).toHaveLength(4)
     expect(renderScore(score)).toContain('class="system-bar"')
   })
+  it('closes both voices on the previous system when a shared measure boundary wraps',()=>{
+    for(const view of ['jianpu','staff'] as const){
+      let score=addScoreVoice({...emptyScore(),view})
+      score=replaceVoiceNotes(score,1,Array.from({length:24},()=>newNote(0)))
+      score=replaceVoiceNotes(score,2,Array.from({length:24},()=>newNote(2)))
+      const layout=layoutScore(score)
+      expect(layout.staves.map(stave=>stave.measureNumber)).toEqual([1,1,4,4])
+      for(const voice of [1,2]){
+        const last=layout.positions.filter(position=>position.voice===voice&&position.row===0).slice(-1)[0]
+        const closing=layout.bars.find(position=>position.note.id===`auto-bar:${last.note.id}`)!
+        expect(closing.row).toBe(0)
+        expect(closing.x).toBeGreaterThan(last.x)
+        expect(closing.x).toBeLessThanOrEqual(944)
+      }
+    }
+  })
+
 })

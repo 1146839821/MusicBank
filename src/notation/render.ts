@@ -104,11 +104,15 @@ function layoutPolyphony(score: ScoreDocument, geometry: {start:number;top:numbe
     if((breaks.has(slot.tick)&&slot.tick>0&&x>start)||wrapMeasure||x+slot.width>944){row++;x=start}
     slotMap.set(slot.tick,{x,row});x+=slot.width
   }
+  const previousSlots = new Map(ticks.map((tick,index)=>[tick,index ? slotMap.get(ticks[index-1]) : undefined]))
   for(const item of timeline) {
     const slot=slotMap.get(item.tick)!,voiceIndex=voices.findIndex(voice=>voice.id===item.voice)
     const isBreak=item.note.kind==='break'
-    const noteRow=isBreak?Math.max(0,slot.row-1):slot.row
-    positions.push({note:item.note,index:item.index,voice:item.voice,row:noteRow,x:isBreak?938:slot.x-(item.note.kind==='bar'?22:0),y:top+noteRow*rowHeight+voiceIndex*stride})
+    // A closing bar shares the next note's tick, but belongs to the system it closes.
+    const previousSlot=previousSlots.get(item.tick)
+    const closesPreviousRow=item.note.kind==='bar'&&item.note.bar!=='repeatStart'&&previousSlot&&previousSlot.row<slot.row
+    const noteRow=closesPreviousRow?previousSlot.row:isBreak?Math.max(0,slot.row-1):slot.row
+    positions.push({note:item.note,index:item.index,voice:item.voice,row:noteRow,x:isBreak||closesPreviousRow?938:slot.x-(item.note.kind==='bar'?22:0),y:top+noteRow*rowHeight+voiceIndex*stride})
   }
   const staves=Array.from({length:row+1},(_,i)=>voices.map((voice,j)=>({row:i,voice:voice.id,y:top+i*rowHeight+j*stride}))).flat()
   return {positions,staves,rows:row+1,start,top,rowHeight,height:Math.max(390,top+70+(row+1)*rowHeight)}
