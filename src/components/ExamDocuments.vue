@@ -4,6 +4,7 @@ import { renderAsync } from 'docx-preview'
 import { buildPaperDocument } from '../../electron/paper-documents'
 import type { DocumentKind, PaperRecord, TemplateSummary } from '../../electron/types'
 import { paginatePreview } from '../papers/paginate'
+import { resolveMediaImage } from '../media-store'
 import { templateBytes } from '../papers/template-store'
 const props=defineProps<{paper:PaperRecord;summary:TemplateSummary}>()
 const emit=defineEmits<{close:[]}>()
@@ -16,7 +17,7 @@ async function preview(){
   const current=++revision;loading.value=true;error.value='';renderFailed.value=false;status.value=''
   try{
     let bytes=documents.get(kind.value)
-    if(!bytes){bytes=window.musicBank?new Uint8Array(await window.musicBank.documents.build(props.paper.id,kind.value)):await buildPaperDocument(await templateBytes(props.paper.templateId!),props.paper,kind.value);documents.set(kind.value,bytes)}
+    if(!bytes){bytes=window.musicBank?new Uint8Array(await window.musicBank.documents.build(props.paper.id,kind.value)):await buildPaperDocument(await templateBytes(props.paper.templateId!),props.paper,kind.value,resolveMediaImage);documents.set(kind.value,bytes)}
     await nextTick();if(current!==revision||!host.value)return
     const container=document.createElement('div')
     await renderAsync(asBuffer(bytes),container,container,{inWrapper:true,ignoreWidth:false,ignoreHeight:false,breakPages:true,ignoreLastRenderedPageBreak:false,useBase64URL:true,renderHeaders:true,renderFooters:true,renderFootnotes:true})

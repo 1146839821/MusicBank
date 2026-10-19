@@ -8,7 +8,10 @@ export interface UserProfile {
   userCode: string
 }
 
+export interface QuestionAttachment { id: string; assetType: 'image' | 'audio'; name: string; duration?: string; notationDocument?: string }
+
 export interface QuestionRecord {
+  attachments?: QuestionAttachment[]
   id: string
   title: string
   titleRuns?: TextRun[]

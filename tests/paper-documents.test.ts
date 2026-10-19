@@ -40,6 +40,17 @@ describe('real Word exam templates',()=>{
     const exam=paper();exam.items[0].snapshot.title='甲 < 乙 & 丙';const result=await JSZip.loadAsync(await buildPaperDocument(await zip.generateAsync({type:'uint8array'}),exam,'paper'))
     expect(await result.file('word/document.xml')!.async('string')).toContain('甲 &lt; 乙 &amp; 丙');expect(await result.file('word/header1.xml')!.async('string')).toContain('实验小学')
   })
+  it('exports every attached image in order and labels each listening material',async()=>{
+    const exam=paper(),q=exam.items[0].snapshot
+    q.attachments=[{id:'image-1',assetType:'image',name:'乐谱一'},{id:'audio-1',assetType:'audio',name:'片段一.wav'},{id:'image-2',assetType:'image',name:'乐谱二'},{id:'audio-2',assetType:'audio',name:'片段二.wav'}]
+    q.hasImage=true;q.hasAudio=true
+    const ids:string[]=[]
+    const result=await JSZip.loadAsync(await buildPaperDocument(await template(),exam,'paper',async id=>{ids.push(id);return {bytes:new Uint8Array([1,2,3]),width:200,height:50}}))
+    expect(ids).toEqual(['image-1','image-2'])
+    expect(result.file('word/media/musicbank-1.png')).not.toBeNull();expect(result.file('word/media/musicbank-2.png')).not.toBeNull()
+    const content=await result.file('word/document.xml')!.async('string')
+    expect(content).toContain('片段一.wav');expect(content).toContain('片段二.wav')
+  })
   it('embeds music images and fails clearly if assets are missing',async()=>{
     const exam=paper();exam.items[0].snapshot.imageAssetId='image';exam.items[0].snapshot.hasImage=true;const source=await template()
     await expect(buildPaperDocument(source,exam,'paper')).rejects.toThrow('图片无法读取')

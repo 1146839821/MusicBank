@@ -1,3 +1,4 @@
+import { questionAttachments } from './question-assets.js'
 import JSZip from 'jszip'
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom'
 import type { DocumentKind, PaperRecord, QuestionType, TemplateSummary, TextRun } from './types.js'
@@ -121,17 +122,21 @@ export async function buildPaperDocument(bytes:Uint8Array,paper:PaperRecord,kind
     const suffix=`${q.type==='选择题'&&q.answerMode==='multiple'?'（多选）':''}${q.type==='选择题'?'（　　）':''}（${item.score} 分）`
     const titleRuns=q.titleRuns?.map(run=>run.text).join('')===q.title?q.titleRuns:[{text:q.title}]
     let xml=paragraph(`${label}${q.title}${suffix}`,{keepNext:true,runs:[{text:label},...titleRuns!,{text:suffix}]})
-    if(q.imageAssetId){
+    const images=questionAttachments(q).filter(item=>item.assetType==='image')
+    for(const attachment of images){
       if(!resolveImage)throw new Error(`第 ${item.position} 题的图片无法读取`)
-      const image=await resolveImage(q.imageAssetId)
+      const image=await resolveImage(attachment.id)
       if(!image.bytes.length||!Number.isFinite(image.width)||!Number.isFinite(image.height)||image.width<=0||image.height<=0)throw new Error('题目图片无效')
       const id=`musicbankImage${++imageCounter}`,name=`musicbank-${imageCounter}.png`
       zip.file(`word/media/${name}`,image.bytes)
       const relation=relDoc.createElementNS(R,'Relationship');relation.setAttribute('Id',id);relation.setAttribute('Type','http://schemas.openxmlformats.org/officeDocument/2006/relationships/image');relation.setAttribute('Target',`media/${name}`);relDoc.documentElement!.appendChild(relation)
       const width=Math.min((summary.pageWidth-55)/25.4*914400,4800000),height=width*image.height/image.width,scale=Math.min(1,4800000/height),cx=Math.round(width*scale),cy=Math.round(height*scale)
       xml+=`<w:p><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${10000+imageCounter}" name="题目图片 ${imageCounter}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="0" name="${name}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${id}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`
-    }else if(q.hasImage)throw new Error(`第 ${item.position} 题缺少图片素材，请重新导入图片后再组卷`)
-    if(q.hasAudio)xml+=paragraph(`【听音材料 ${item.position}：${q.audioName||'音乐片段'}，由监考教师统一播放】`,{size:20})
+    }
+    if(!images.length&&q.hasImage)throw new Error(`第 ${item.position} 题缺少图片素材，请重新导入图片后再组卷`)
+    const audio=questionAttachments(q).filter(item=>item.assetType==='audio')
+    for(const [index,attachment] of audio.entries())xml+=paragraph(`【听音材料 ${item.position}-${index+1}：${attachment.name}，由监考教师统一播放】`,{size:20})
+    if(q.hasAudio&&!audio.length)xml+=paragraph(`【听音材料 ${item.position}：${q.audioName||'音乐片段'}，由监考教师统一播放】`,{size:20})
     if(q.type==='选择题')xml+=paragraph((q.options||[]).map((option,i)=>`${String.fromCharCode(65+i)}. ${option}`).join('\n'))
     else if(q.type==='判断题')xml+=paragraph('判断：（　　）　正确请填 √，错误请填 ×。')
     else if(q.type==='简答题')xml+=paragraph('________________________________________________________________\n\n________________________________________________________________\n\n________________________________________________________________')

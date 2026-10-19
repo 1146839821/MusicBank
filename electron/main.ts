@@ -1,9 +1,10 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, session } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, protocol, session } from 'electron'
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { registerDocumentHandlers } from './document-handlers.js'
+import { assetResponse } from './asset-response.js'
 import { ensureDefaultTemplate } from './default-template.js'
 import { inspectTemplate } from './paper-documents.js'
 import { restoreBackup } from './restore-backup.js'
@@ -44,9 +45,8 @@ app.whenReady().then(async () => {
   protocol.handle('musicbank-asset', async (request) => {
     const id = decodeURIComponent(new URL(request.url).hostname || new URL(request.url).pathname.replace(/^\//, ''))
     const asset = database.findAsset(id)
-    if (!asset) return new Response('Asset not found', { status: 404 })
-    const folder = asset.assetType === 'audio' ? database.audioPath : database.imagePath
-    return net.fetch(pathToFileURL(join(folder, basename(asset.storedName))).toString())
+    const folder = asset?.assetType === 'audio' ? database.audioPath : database.imagePath
+    return assetResponse(request, asset, folder)
   })
   ipcMain.handle('questions:list', () => database.listQuestions())
   ipcMain.handle('questions:save', (_event, question: QuestionRecord) => database.saveQuestion(question))
