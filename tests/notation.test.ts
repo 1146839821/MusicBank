@@ -45,6 +45,17 @@ describe('editable music scores', () => {
       expect(svg).not.toMatch(/class="measure-number"[^>]*>2<\/text>/)
     }
   })
+  it('renders the first staff bar in empty and populated scores for editing and export', () => {
+    for (const notes of [[], [newNote(0)]]) {
+      const score = {...emptyScore(), view:'staff' as const, notes}
+      for (const interactive of [false,true]) {
+        const layout=layoutScore(score), svg=renderScore(score,[],0,interactive)
+        const first=layout.staves[0]
+        expect(svg).toContain(`class="initial-measure-bar" d="M${layout.start-24} ${first.y}V${first.y+48}"`)
+        expect(svg).toContain(`class="system-bar" d="M64 ${first.y}V${first.y+48}"`)
+      }
+    }
+  })
   it('keeps measure numbering across manual breaks, partial measures and leading repeat bars', () => {
     const score=emptyScore()
     const bar={...newNote(0),kind:'bar' as const,bar:'repeatStart' as const}
