@@ -5,6 +5,7 @@ import PromptEditor from './components/PromptEditor.vue'
 import QuestionText from './components/QuestionText.vue'
 import type { TextRun } from '../electron/types'
 import PaperWorkspace from './components/PaperWorkspace.vue'
+import { copyQuestion } from './question-copy'
 import { judgmentLabel, judgmentCorrect } from './question-answers'
 import NotationEditor from './components/NotationEditor.vue'
 import { musicCategories } from '../electron/music-categories'
@@ -511,15 +512,7 @@ const libraryMutationBusy = ref(false)
 
 async function duplicateQuestion(question: Question) {
   if (libraryMutationBusy.value) return
-  const copy: Question = {
-    ...question,
-    id: nextQuestionId.value,
-    title: `${question.title}（副本）`,
-    status: '草稿',
-    updated: '刚刚',
-    options: question.options ? [...question.options] : undefined,
-    fillAnswers: question.fillAnswers ? [...question.fillAnswers] : undefined,
-  }
+  const copy = copyQuestion(question, nextQuestionId.value)
   libraryMutationBusy.value = true
   try {
     if (window.musicBank) await window.musicBank.questions.save(copy)
