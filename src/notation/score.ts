@@ -4,8 +4,10 @@ export interface ScorePitch {
   pitch: number
   accidental: '' | '#' | 'b' | 'n'
 }
+export interface ScoreVoice { id: number; name: string; muted?: boolean }
 export interface ScoreNote {
   id: string
+  voice?: number
   kind: 'note' | 'rest' | 'bar' | 'break'
   pitch: number // Diatonic steps from middle C (C4).
   duration: Duration
@@ -27,6 +29,7 @@ export interface ScoreDocument {
   tempo: number
   view: ScoreView
   notes: ScoreNote[]
+  voices?: ScoreVoice[]
 }
 export function emptyScore(): ScoreDocument {
   return { version: 1, title: '', key: 'C', beats: 4, beatUnit: 4, tempo: 96, view: 'jianpu', notes: [] }
@@ -43,9 +46,13 @@ export function parseScore(source?: string): ScoreDocument {
     || !Number.isInteger(value.beats) || value.beats < 1 || value.beats > 12
     || ![2,4,8,16].includes(value.beatUnit) || !Number.isFinite(value.tempo) || value.tempo < 30 || value.tempo > 240
     || value.notes.length > 2000) throw new Error('无效的乐谱源稿')
+  if (value.voices !== undefined && (!Array.isArray(value.voices) || value.voices.length < 1 || value.voices.length > 4
+    || value.voices.some(voice => !voice || !Number.isInteger(voice.id) || voice.id < 1 || voice.id > 4 || typeof voice.name !== 'string' || !voice.name.trim() || voice.name.length > 32 || (voice.muted !== undefined && typeof voice.muted !== 'boolean'))
+    || new Set(value.voices.map(voice => voice.id)).size !== value.voices.length)) throw new Error('无效的声部设置')
+  const voiceIds = new Set(scoreVoices(value).map(voice => voice.id))
   const ids = new Set<string>()
   for (const note of value.notes) {
-    if (!note || typeof note.id !== 'string' || ids.has(note.id) || !['note','rest','bar','break'].includes(note.kind)
+    if (!note || (note.voice !== undefined && !Number.isInteger(note.voice)) || !voiceIds.has(note.voice ?? 1) || typeof note.id !== 'string' || ids.has(note.id) || !['note','rest','bar','break'].includes(note.kind)
       || !Number.isInteger(note.pitch) || note.pitch < -14 || note.pitch > 28 || !durations.includes(note.duration)
       || ![0,1,2].includes(note.dots) || !['','#','b','n'].includes(note.accidental)
       || typeof note.lyric !== 'string' || typeof note.mark !== 'string'
@@ -112,13 +119,47 @@ export function pitchMidi(note: ScorePitch, key = 'C') {
 
 export function keyTonic(key: string) { return 'CDEFGAB'.indexOf(key[0]) }
 
-export function scorePlayback(score: ScoreDocument) {
-  let beats = 0
+export function scoreVoices(score: ScoreDocument): ScoreVoice[] {
+  return score.voices || [{ id: 1, name: '声部 1' }]
+}
+export function voiceNotes(score: ScoreDocument, voice: number): ScoreNote[] {
+  return score.notes.filter(note => (note.voice ?? 1) === voice)
+}
+export function replaceVoiceNotes(score: ScoreDocument, voice: number, notes: ScoreNote[]): ScoreDocument {
+  if (!scoreVoices(score).some(item => item.id === voice)) throw new Error('声部不存在')
+  return { ...score, notes: [...score.notes.filter(note => (note.voice ?? 1) !== voice), ...notes.map(note => ({ ...note, voice }))] }
+}
+export function addScoreVoice(score: ScoreDocument): ScoreDocument {
+  const voices = scoreVoices(score)
+  const id = [1,2,3,4].find(candidate => !voices.some(voice => voice.id === candidate))
+  if (!id) throw new Error('最多支持四个声部。')
+  return { ...score, voices: [...voices.map(voice => ({ ...voice })), { id, name: `声部 ${id}` }] }
+}
+export function removeScoreVoice(score: ScoreDocument, id: number): ScoreDocument {
+  if (scoreVoices(score).length === 1) throw new Error('至少保留一个声部。')
+  return { ...score, voices: scoreVoices(score).filter(voice => voice.id !== id), notes: score.notes.filter(note => (note.voice ?? 1) !== id) }
+}
+// Integer ticks keep dotted 64ths and triplets on identical beat positions across voices.
+export const TICKS_PER_BEAT = 192
+export function scoreTimeline(score: ScoreDocument) {
+  const elapsed = new Map<number,number>()
+  return score.notes.map((note,index) => {
+    const voice = note.voice ?? 1, tick = elapsed.get(voice) || 0
+    const ticks = Math.round(noteBeats(note)*TICKS_PER_BEAT)
+    elapsed.set(voice,tick+ticks)
+    return { note, index, voice, tick, ticks }
+  })
+}
+export function scorePlayback(score: ScoreDocument, onlyVoice?: number) {
+  const voices = scoreVoices(score).filter(voice => onlyVoice === undefined || voice.id === onlyVoice)
   const events: { start: number; beats: number; midi: number[] }[] = []
-  for (const note of score.notes) {
-    const length = noteBeats(note)
-    if (note.kind === 'note') events.push({ start: beats, beats: length, midi: noteTones(note).map(tone => pitchMidi(tone, score.key)) })
-    beats += length
+  let ticks = 0
+  for (const item of scoreTimeline(score)) {
+    const voice = voices.find(voice => voice.id === item.voice)
+    if (!voice) continue
+    ticks = Math.max(ticks,item.tick+item.ticks)
+    if (item.note.kind === 'note' && !voice.muted) events.push({ start: item.tick/TICKS_PER_BEAT, beats: item.ticks/TICKS_PER_BEAT, midi: noteTones(item.note).map(tone => pitchMidi(tone, score.key)) })
   }
-  return { events, beats }
+  events.sort((a,b) => a.start-b.start)
+  return { events, beats: ticks/TICKS_PER_BEAT }
 }

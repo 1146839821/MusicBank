@@ -1,5 +1,5 @@
-import { keyTonic, noteName, noteTones, type ScoreDocument, type ScoreNote } from './score'
-export interface NotePosition { note: ScoreNote; index: number; x: number; y: number; row: number }
+import { keyTonic, noteName, noteTones, scoreVoices, scoreTimeline, TICKS_PER_BEAT, type ScoreDocument, type ScoreNote } from './score'
+export interface NotePosition { note: ScoreNote; index: number; x: number; y: number; row: number; voice: number }
 export const SCORE_WIDTH = 1000
 export const ROW_HEIGHT = 180
 export function escapeXml(value: string) {
@@ -28,8 +28,10 @@ export function layoutScore(score: ScoreDocument) {
   const rise = Math.max(0,...score.notes.filter(n => n.kind === 'note').map(n => chordRise(n,score.key)))
   const top = score.view === 'staff' ? 160 + Math.max(0,high*6-40) : 160 + rise
   const rowHeight = score.view === 'staff' ? Math.max(ROW_HEIGHT,(high-low)*6+100,140-low*6,high*6+70) : ROW_HEIGHT + rise
-  let x = start, row = 0
   const widthOf = (note: ScoreNote) => note.kind === 'bar' ? 26 : Math.max(note.chord?.length ? 80 : 0, note.duration === 1 ? 112 : note.duration === 2 ? 72 : 54, Math.min(160, note.lyric.length * 17 + 20))
+  const voices=scoreVoices(score)
+  if (voices.length > 1) return layoutPolyphony(score,{start,top,stride:rowHeight,rise,widthOf})
+  let x = start, row = 0
   score.notes.forEach((note, index) => {
     const measureStart = index === 0 || ['bar','break'].includes(score.notes[index-1].kind)
     let measureWidth = 0
@@ -45,12 +47,42 @@ export function layoutScore(score: ScoreDocument) {
     if (x > 908 || wrapMeasure || note.kind === 'break') {
       row += 1
       x = start
-      if (note.kind === 'break') { positions.push({ note, index, x: 938, y: top + (row - 1) * rowHeight, row: row - 1 }); return }
+      if (note.kind === 'break') { positions.push({ note, index, x: 938, y: top + (row - 1) * rowHeight, row: row - 1, voice: voices[0].id }); return }
     }
-    positions.push({ note, index, x, y: top + row * rowHeight, row })
+    positions.push({ note, index, x, y: top + row * rowHeight, row, voice: voices[0].id })
     x += widthOf(note)
   })
-  return { positions, rows: row + 1, start, top, rowHeight, height: Math.max(390, top + 70 + (row + 1) * rowHeight) }
+  const staves=Array.from({length:row+1},(_,i)=>({row:i,voice:voices[0].id,y:top+i*rowHeight}))
+  return { positions, staves, rows: row + 1, start, top, rowHeight, height: Math.max(390, top + 70 + (row + 1) * rowHeight) }
+}
+function layoutPolyphony(score: ScoreDocument, geometry: {start:number;top:number;stride:number;rise:number;widthOf:(note:ScoreNote)=>number}) {
+  const {start,top,stride,widthOf}=geometry, voices=scoreVoices(score),timeline=scoreTimeline(score)
+  const rowHeight=stride*voices.length+40, positions:NotePosition[]=[]
+  const measureTicks=score.beats*4/score.beatUnit*TICKS_PER_BEAT
+  const itemsByTick=new Map<number,typeof timeline>()
+  for(const item of timeline) { const items=itemsByTick.get(item.tick)||[];items.push(item);itemsByTick.set(item.tick,items) }
+  const ticks=[...new Set([0,...itemsByTick.keys()])].sort((a,b)=>a-b)
+  const slots=ticks.map((tick,index)=>({tick,width:Math.max(54,...(itemsByTick.get(tick)||[]).map(item=>widthOf(item.note)),Math.min(150,((ticks[index+1]??tick+TICKS_PER_BEAT)-tick)/TICKS_PER_BEAT*42))}))
+  const slotMap=new Map<number,{x:number;row:number}>()
+  const breaks=new Set(timeline.filter(item=>item.note.kind==='break').map(item=>item.tick))
+  let x=start,row=0
+  for(let i=0;i<slots.length;i++) {
+    const slot=slots[i],measure=Math.floor(slot.tick/measureTicks)
+    const startsMeasure=i===0||Math.floor(slots[i-1].tick/measureTicks)!==measure
+    let measureWidth=0
+    if(startsMeasure) for(let j=i;j<slots.length&&Math.floor(slots[j].tick/measureTicks)===measure;j++) measureWidth+=slots[j].width
+    const wrapMeasure=startsMeasure&&x>start&&measureWidth<=944-start&&x+measureWidth>944
+    if((breaks.has(slot.tick)&&slot.tick>0&&x>start)||wrapMeasure||x+slot.width>944){row++;x=start}
+    slotMap.set(slot.tick,{x,row});x+=slot.width
+  }
+  for(const item of timeline) {
+    const slot=slotMap.get(item.tick)!,voiceIndex=voices.findIndex(voice=>voice.id===item.voice)
+    const isBreak=item.note.kind==='break'
+    const noteRow=isBreak?Math.max(0,slot.row-1):slot.row
+    positions.push({note:item.note,index:item.index,voice:item.voice,row:noteRow,x:isBreak?938:slot.x-(item.note.kind==='bar'?22:0),y:top+noteRow*rowHeight+voiceIndex*stride})
+  }
+  const staves=Array.from({length:row+1},(_,i)=>voices.map((voice,j)=>({row:i,voice:voice.id,y:top+i*rowHeight+j*stride}))).flat()
+  return {positions,staves,rows:row+1,start,top,rowHeight,height:Math.max(390,top+70+(row+1)*rowHeight)}
 }
 function staffNote(note: ScoreNote, x: number, top: number, interactive: boolean) {
   const tones = noteTones(note).map((tone,index) => ({...tone,index})).sort((a,b) => a.pitch-b.pitch)
@@ -100,12 +132,15 @@ function bar(note: ScoreNote,x:number,y:number,staff:boolean) {
   const dots=(dx:number)=>`<circle cx="${x+dx}" cy="${top+19}" r="2"/><circle cx="${x+dx}" cy="${top+31}" r="2"/>`
   return note.bar==='end'?line(-5)+line(2,4):note.bar==='double'?line(-3)+line(3):note.bar==='repeatStart'?line(-4,3)+line(2)+dots(9):note.bar==='repeatEnd'?dots(-9)+line(-2)+line(4,3):line(0)
 }
-export function renderScore(score: ScoreDocument, selected: string[] = [], caret = -1, interactive = false) {
-  const { positions,rows,height,top,rowHeight,start } = layoutScore(score)
+export function renderScore(score: ScoreDocument, selected: string[] = [], caret = -1, interactive = false, activeVoice = scoreVoices(score)[0].id) {
+  const { positions,staves,height,top,start } = layoutScore(score)
   const staff = score.view==='staff'
   let body = `<rect width="1000" height="${height}" fill="white"/><g fill="#202124" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Segoe UI Symbol',serif"><text x="500" y="62" font-size="30" font-weight="600" text-anchor="middle">${escapeXml(score.title||'未命名乐谱')}</text><text x="64" y="108" font-size="16">${staff?'调号':'1 ='} ${escapeXml(score.key)}　${score.beats}/${score.beatUnit}　♩ = ${score.tempo}</text>`
-  for(let row=0;row<rows;row++) {
-    const y=top+row*rowHeight
+  for(const stave of staves) {
+    const {row,y,voice}=stave
+    const settings=scoreVoices(score).find(item=>item.id===voice)!
+    if(interactive) body+=`<rect data-voice="${voice}" x="48" y="${y-50}" width="904" height="155" rx="5" fill="${scoreVoices(score).length>1&&voice===activeVoice?'#f8faff':'transparent'}"/>`
+    if(scoreVoices(score).length>1) body+=`<text x="64" y="${y-top+130}" font-size="12" fill="#66748c">${escapeXml(settings.name)}${interactive&&settings.muted?' · 静音':''}</text>`
     if(staff) {
       for(let i=0;i<5;i++) body+=`<path d="M64 ${y+i*12}H944" stroke="#52565e" stroke-width=".85"/>`
       body+=`<text x="72" y="${y+43}" font-size="63">𝄞</text>`
@@ -121,7 +156,7 @@ export function renderScore(score: ScoreDocument, selected: string[] = [], caret
     const rise=staff?0:chordRise(note,score.key)
     const hitTop=staff?Math.min(y-50,y+40-Math.max(...noteTones(note).map(t=>t.pitch))*6):y-50-rise
     const hitBottom=staff?Math.max(y+95,y+80-Math.min(...noteTones(note).map(t=>t.pitch))*6):y+95
-    if(interactive) body+=`<g data-note-id="${escapeXml(note.id)}" data-index="${index}" role="button" tabindex="-1" aria-label="${note.kind==='note'?noteTones(note).length>1?'和弦 '+noteTones(note).map(t=>noteName(t.pitch)).join(' '):noteName(note.pitch):note.kind==='rest'?'休止符':note.kind==='bar'?'小节线':'换行'}"><rect x="${x-23}" y="${hitTop}" width="48" height="${hitBottom-hitTop}" rx="4" fill="${selected.includes(note.id)?'#e7eeff':'transparent'}" stroke="${selected.includes(note.id)?'#8ba7f7':'none'}"/>`
+    if(interactive) body+=`<g data-note-id="${escapeXml(note.id)}" data-voice="${pos.voice}" data-index="${index}" role="button" tabindex="-1" aria-label="${note.kind==='note'?noteTones(note).length>1?'和弦 '+noteTones(note).map(t=>noteName(t.pitch)).join(' '):noteName(note.pitch):note.kind==='rest'?'休止符':note.kind==='bar'?'小节线':'换行'}"><rect x="${x-23}" y="${hitTop}" width="48" height="${hitBottom-hitTop}" rx="4" fill="${selected.includes(note.id)?'#e7eeff':'transparent'}" stroke="${selected.includes(note.id)?'#8ba7f7':'none'}"/>`
     if(note.kind==='note') body+=staff?staffNote(note,x,y,interactive):jianpuStack(note,score.key).map(item => `${interactive?`<g data-tone-index="${item.index}">`:''}${jianpuNote({...note,...item.tone},x,y+item.offset,score.key)}${interactive?'</g>':''}`).join('')
     else if(note.kind==='rest') body+=staff?`<text x="${x}" y="${y+37}" text-anchor="middle" font-size="34">${({1:'𝄻',2:'𝄼',4:'𝄽',8:'𝄾',16:'𝄿',32:'𝅀',64:'𝅁'})[note.duration]}</text>${Array.from({length:note.dots},(_,i)=>`<circle cx="${x+16+i*6}" cy="${y+26}" r="2"/>`).join('')}`:jianpuNote(note,x,y,score.key)
     else if(note.kind==='bar') body+=bar(note,x,y,staff)
@@ -134,8 +169,8 @@ export function renderScore(score: ScoreDocument, selected: string[] = [], caret
     const groups = new Set(score.notes.map(n=>n[field]).filter(Boolean))
     for(const group of groups) {
       const members=positions.filter(p=>p.note[field]===group)
-      for(const row of new Set(members.map(p=>p.row))) {
-        const onRow=members.filter(p=>p.row===row),a=onRow[0],b=onRow[onRow.length-1]
+      for(const lane of new Set(members.map(p=>`${p.row}:${p.voice}`))) {
+        const onRow=members.filter(p=>`${p.row}:${p.voice}`===lane),a=onRow[0],b=onRow[onRow.length-1]
         if(!a||!b) continue
         const y=Math.min(...onRow.map(p=>decorationY(p.note,p.y,staff,score.key)))-20
         body+=field==='slur'?`<path d="M${a.x-6} ${y+16}Q${(a.x+b.x)/2} ${y-12} ${b.x+6} ${y+16}" fill="none" stroke="#202124" stroke-width="1.3"/>`:`<path d="M${a.x-14} ${y+7}v-7H${b.x+14}v7" fill="none" stroke="#202124"/><rect x="${(a.x+b.x)/2-7}" y="${y-10}" width="14" height="16" fill="white"/><text x="${(a.x+b.x)/2}" y="${y+3}" font-size="14" text-anchor="middle">3</text>`
@@ -143,10 +178,12 @@ export function renderScore(score: ScoreDocument, selected: string[] = [], caret
     }
   }
   if(interactive) {
-    const previous=positions[Math.min(caret-1,positions.length-1)]
-    const x=caret===0||!previous?(start-18):previous.x+25,y=previous?.y||top
+    const voicePositions=positions.filter(pos=>pos.voice===activeVoice)
+    const previous=voicePositions[Math.min(caret-1,voicePositions.length-1)]
+    const emptyStave=staves.find(stave=>stave.voice===activeVoice)
+    const x=caret===0||!previous?(start-18):previous.x+25,y=previous?.y||emptyStave?.y||top
     body+=`<path class="score-caret" d="M${x} ${y-13}v72" stroke="#3b6df6" stroke-width="2"/>`
-    if(!score.notes.length) body+=`<text x="500" y="300" text-anchor="middle" font-size="15" fill="#9299a5">点击谱面放置光标，使用 1–7 或上方面板录入音符</text>`
+    if(!voicePositions.length) body+=`<text x="500" y="${(emptyStave?.y||top)+70}" text-anchor="middle" font-size="15" fill="#9299a5">点击谱面放置光标，使用 1–7 或上方面板录入音符</text>`
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="${height}" viewBox="0 0 1000 ${height}">${body}</g></svg>`
 }

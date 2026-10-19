@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
-import { durations, emptyScore, keyTonic, newNote, noteName, scorePlayback, noteTones, withChordTone, updateTone, removeTone, parseScore, transposeNotes, type Duration, type ScoreDocument, type ScoreNote } from '../notation/score'
+import { durations, emptyScore, keyTonic, newNote, noteName, scorePlayback, scoreVoices, voiceNotes, replaceVoiceNotes, addScoreVoice, removeScoreVoice, noteTones, withChordTone, updateTone, removeTone, parseScore, transposeNotes, type Duration, type ScoreDocument, type ScoreNote } from '../notation/score'
 import { layoutScore, renderScore } from '../notation/render'
 
 const props = defineProps<{ source: string; busy?: boolean }>()
@@ -8,6 +8,11 @@ const emit = defineEmits<{ close: []; change: [source: string]; export: [svg: st
 const score = ref<ScoreDocument>(emptyScore())
 const selected = ref<string[]>([])
 const caret = ref(0)
+const activeVoice = ref(1)
+const voices = computed(() => scoreVoices(score.value))
+const activeNotes = computed(() => voiceNotes(score.value,activeVoice.value))
+const auditionMode = ref('all')
+const voiceCarets = new Map<number,number>()
 const duration = ref<Duration>(4)
 const mode = ref<'insert'|'replace'|'chord'>('insert')
 const zoom = ref(100)
@@ -20,7 +25,7 @@ const current = computed(() => score.value.notes.find(note => selected.value.inc
 const toneSelection = ref({id:'',index:0})
 const toneIndex = computed(() => current.value?.id === toneSelection.value.id ? Math.min(toneSelection.value.index,current.value.chord?.length||0) : 0)
 const currentTones = computed(() => current.value?.kind === 'note' ? noteTones(current.value) : [])
-const svg = computed(() => renderScore(score.value, selected.value, caret.value, true))
+const svg = computed(() => renderScore(score.value, selected.value, caret.value, true, activeVoice.value))
 const noteCount = computed(() => score.value.notes.filter(note => note.kind==='note'||note.kind==='rest').length)
 let sound: AudioContext | undefined
 const playing = ref(false)
@@ -28,9 +33,51 @@ let playbackRevision = 0
 let playbackTimer: ReturnType<typeof setTimeout> | undefined
 watch(() => props.source, source => {
   if(source === JSON.stringify(score.value)) return
-  try { score.value = parseScore(source); caret.value = score.value.notes.length; selected.value=[]; history.value=[]; future.value=[] }
+  try { score.value = parseScore(source); activeVoice.value = scoreVoices(score.value)[0].id; caret.value = activeNotes.value.length; selected.value=[]; history.value=[]; future.value=[] }
   catch { message.value='源稿格式不受支持，请先检查内容。' }
 }, { immediate:true })
+function syncVoice() {
+  if (!voices.value.some(voice=>voice.id===activeVoice.value)) activeVoice.value=voices.value[0].id
+  caret.value=Math.min(caret.value,activeNotes.value.length)
+  selected.value=[]
+}
+function switchVoice(id: number, reveal = false) {
+  if (id===activeVoice.value) return
+  stop();voiceCarets.set(activeVoice.value,caret.value);activeVoice.value=id
+  caret.value=Math.min(voiceCarets.get(id)??activeNotes.value.length,activeNotes.value.length)
+  selected.value=[];message.value=''
+  if(reveal) void nextTick(()=>{
+    const stave=Array.from(canvas.value?.querySelectorAll('rect[data-voice]')||[]).find(element=>Number(element.getAttribute('data-voice'))===id)
+    stave?.scrollIntoView({block:'nearest',inline:'nearest'})
+  })
+}
+function addVoice() {
+  try {
+    const updated=addScoreVoice(score.value)
+    edit(()=>{score.value=updated})
+    switchVoice(updated.voices![updated.voices!.length-1].id,true)
+    message.value='新声部从第 1 拍开始；需要延后进入时可先录入休止符。'
+  } catch(error) { message.value=(error as Error).message }
+}
+function removeVoice() {
+  try {
+    const updated=removeScoreVoice(score.value,activeVoice.value)
+    edit(()=>{score.value=updated;syncVoice()})
+    message.value='声部已移除，可使用撤销恢复。'
+  } catch(error) { message.value=(error as Error).message }
+}
+function renameVoice(event: Event) {
+  const name=(event.target as HTMLInputElement).value.trim().slice(0,32)
+  if (!name) { (event.target as HTMLInputElement).value=voices.value.find(voice=>voice.id===activeVoice.value)!.name; return }
+  edit(()=>{score.value.voices=voices.value.map(voice=>({...voice,...(voice.id===activeVoice.value?{name}:{})}))})
+}
+function muteVoice() {
+  edit(()=>{score.value.voices=voices.value.map(voice=>({...voice,...(voice.id===activeVoice.value?{muted:!voice.muted}:{})}))})
+}
+function spliceVoice(index: number, count: number, ...notes: ScoreNote[]) {
+  const items=[...activeNotes.value];items.splice(index,count,...notes)
+  score.value=replaceVoiceNotes(score.value,activeVoice.value,items)
+}
 function save(before: string) {
   if(before===JSON.stringify(score.value)) return
   history.value.push(before)
@@ -45,14 +92,14 @@ function revealSelection() {
     element?.scrollIntoView({block:'nearest',inline:'nearest'})
   })
 }
-function edit(action: () => void) { stop(); const before=JSON.stringify(score.value); action(); save(before) }
+function edit(action: () => void) { stop(); message.value=''; const before=JSON.stringify(score.value); action(); save(before) }
 function undo() {
   const previous=history.value.pop(); if(!previous) return
-  stop(); future.value.push(JSON.stringify(score.value)); score.value=parseScore(previous); selected.value=[]; caret.value=Math.min(caret.value,score.value.notes.length); emit('change',previous)
+  stop(); future.value.push(JSON.stringify(score.value)); score.value=parseScore(previous); syncVoice(); emit('change',previous); message.value='已撤销'
 }
 function redo() {
   const next=future.value.pop(); if(!next) return
-  stop(); history.value.push(JSON.stringify(score.value)); score.value=parseScore(next); selected.value=[]; caret.value=Math.min(caret.value,score.value.notes.length); emit('change',next)
+  stop(); history.value.push(JSON.stringify(score.value)); score.value=parseScore(next); syncVoice(); emit('change',next); message.value='已重做'
 }
 function insert(note: ScoreNote) {
   if (mode.value === 'chord' && note.kind === 'note') {
@@ -70,7 +117,7 @@ function insert(note: ScoreNote) {
     if(mode.value==='replace' && current.value && (note.kind==='note'||note.kind==='rest')) {
       Object.assign(current.value,{kind:note.kind,pitch:note.pitch,duration:note.duration,chord:undefined})
     } else {
-      score.value.notes.splice(caret.value,0,note); caret.value++; selected.value=[note.id]
+      spliceVoice(caret.value,0,note); caret.value++; selected.value=[note.id]
     }
   })
 }
@@ -107,10 +154,10 @@ function deleteTone() {
 function deleteSelection(backward = false) {
   edit(()=>{
     if(selected.value.length) {
-      const first=score.value.notes.findIndex(n=>selected.value.includes(n.id))
+      const first=activeNotes.value.findIndex(n=>selected.value.includes(n.id))
       score.value.notes=score.value.notes.filter(n=>!selected.value.includes(n.id));caret.value=Math.max(0,first)
-    } else if(caret.value>0&&backward) {score.value.notes.splice(--caret.value,1)}
-    else score.value.notes.splice(caret.value,1)
+    } else if(caret.value>0&&backward) {spliceVoice(--caret.value,1)}
+    else spliceVoice(caret.value,1)
     selected.value=[]
   })
 }
@@ -138,10 +185,10 @@ function paste() {
       for(const field of ['slur','tuplet'] as const)if(note[field]){if(!groups.has(note[field]!))groups.set(note[field]!,crypto.randomUUID());note[field]=groups.get(note[field]!)}
       return note
     })
-    score.value.notes.splice(caret.value,0,...notes);caret.value+=notes.length;selected.value=notes.map(n=>n.id)
+    spliceVoice(caret.value,0,...notes);caret.value+=notes.length;selected.value=notes.map(n=>n.id)
   })
 }
-function selectAll() {selected.value=score.value.notes.map(n=>n.id)}
+function selectAll() {selected.value=activeNotes.value.map(n=>n.id)}
 function keydown(event: KeyboardEvent) {
   if((event.target as HTMLElement).closest('input,textarea,select'))return
   const command=event.metaKey||event.ctrlKey
@@ -161,7 +208,7 @@ function keydown(event: KeyboardEvent) {
   if(letter>=0&&event.key.length===1){event.preventDefault();pitch(letter+1);return}
   if(event.key==='ArrowUp'||event.key==='ArrowDown'){event.preventDefault();transpose((event.key==='ArrowUp'?1:-1)*(event.shiftKey?7:1))}
   if(event.key==='ArrowLeft'||event.key==='ArrowRight'){
-    event.preventDefault();caret.value=Math.max(0,Math.min(score.value.notes.length,caret.value+(event.key==='ArrowRight'?1:-1)));selected.value=[]
+    event.preventDefault();caret.value=Math.max(0,Math.min(activeNotes.value.length,caret.value+(event.key==='ArrowRight'?1:-1)));selected.value=[]
   }
   if(event.key==='Backspace'||event.key==='Delete'){event.preventDefault();deleteSelection(event.key==='Backspace')}
   if(event.key==='.') {event.preventDefault();modify({dots:((current.value?.dots||0)+1)%3})}
@@ -180,11 +227,14 @@ function pointerdown(event: PointerEvent) {
   const target=(event.target as Element).closest('[data-note-id]')
   const {x,y}=point(event)
   if(target){
-    const id=target.getAttribute('data-note-id')!,index=score.value.notes.findIndex(n=>n.id===id)
-    if(event.shiftKey&&selected.value.length){const anchor=score.value.notes.findIndex(n=>n.id===selected.value[0]);selected.value=score.value.notes.slice(Math.min(anchor,index),Math.max(anchor,index)+1).map(n=>n.id)}
+    const id=target.getAttribute('data-note-id')!
+    const clicked=score.value.notes.find(n=>n.id===id)!
+    switchVoice(clicked.voice??1)
+    const index=activeNotes.value.findIndex(n=>n.id===id)
+    if(event.shiftKey&&selected.value.length){const anchor=activeNotes.value.findIndex(n=>n.id===selected.value[0]);selected.value=activeNotes.value.slice(Math.min(anchor,index),Math.max(anchor,index)+1).map(n=>n.id)}
     else selected.value=[id]
     caret.value=index+1
-    const note=score.value.notes[index]
+    const note=activeNotes.value[index]
     const toneTarget=(event.target as Element).closest('[data-tone-index]')
     const tone=Number(toneTarget?.getAttribute('data-tone-index')||0)
     toneSelection.value={id,index:tone}
@@ -193,9 +243,11 @@ function pointerdown(event: PointerEvent) {
   } else {
     selected.value=[]
     const layout=layoutScore(score.value)
-    const row=Math.max(0,Math.round((y-layout.top-20)/layout.rowHeight)),positions=layout.positions
-    const next=positions.find(p=>p.row>row||(p.row===row&&p.x>x))
-    caret.value=next?.index??score.value.notes.length
+    const stave=[...layout.staves].sort((a,b)=>Math.abs(a.y+20-y)-Math.abs(b.y+20-y))[0]
+    switchVoice(stave.voice)
+    const positions=layout.positions.filter(pos=>pos.voice===stave.voice)
+    const next=positions.find(pos=>pos.row>stave.row||(pos.row===stave.row&&pos.x>x))
+    caret.value=next?activeNotes.value.findIndex(note=>note.id===next.note.id):activeNotes.value.length
   }
 }
 function pointermove(event: PointerEvent) {
@@ -213,8 +265,8 @@ function pointerup() {if(drag){if(drag.moved)save(drag.before);drag=undefined}}
 function doubleclick(event: MouseEvent) {
   if((event.target as Element).closest('[data-note-id]'))return
   const {y}=point(event),layout=layoutScore(score.value)
-  const row=Math.max(0,Math.round((y-layout.top-20)/layout.rowHeight))
-  const value=score.value.view==='staff'?Math.max(-14,Math.min(28,Math.round((layout.top+row*layout.rowHeight+60-y)/6))):keyTonic(score.value.key)
+  const stave=[...layout.staves].filter(stave=>stave.voice===activeVoice.value).sort((a,b)=>Math.abs(a.y+20-y)-Math.abs(b.y+20-y))[0]
+  const value=score.value.view==='staff'?Math.max(-14,Math.min(28,Math.round((stave.y+60-y)/6))):keyTonic(score.value.key)
   insert(newNote(value,duration.value))
 }
 function setMeta(field: 'title'|'key'|'beats'|'beatUnit'|'tempo',event: Event) {
@@ -227,6 +279,8 @@ function setMeta(field: 'title'|'key'|'beats'|'beatUnit'|'tempo',event: Event) {
 async function play() {
   stop()
   if(!noteCount.value)return
+  const playback=scorePlayback(score.value,auditionMode.value==='current'?activeVoice.value:undefined)
+  if(!playback.events.length){message.value='所选声部没有可试听的音符，或已设为静音。';return}
   const revision = playbackRevision
   const context = new AudioContext()
   sound = context
@@ -234,20 +288,21 @@ async function play() {
   if (revision !== playbackRevision) return
   playing.value=true
   const startTime=context.currentTime+.05
-  const playback=scorePlayback(score.value), beatSeconds=60/score.value.tempo
+  const beatSeconds=60/score.value.tempo
+  const voiceGain=Math.sqrt(auditionMode.value==='current'?1:voices.value.filter(voice=>!voice.muted).length)
   for (const event of playback.events) {
     const time=startTime+event.start*beatSeconds, seconds=event.beats*beatSeconds
     for (const midi of event.midi) {
       const oscillator=context.createOscillator(),gain=context.createGain()
       oscillator.type='triangle';oscillator.frequency.value=440*2**((midi-69)/12)
-      gain.gain.setValueAtTime(0,time);gain.gain.linearRampToValueAtTime(.12/Math.sqrt(event.midi.length),time+.015);gain.gain.exponentialRampToValueAtTime(.001,time+Math.max(.03,seconds*.9))
+      gain.gain.setValueAtTime(0,time);gain.gain.linearRampToValueAtTime(.12/(Math.sqrt(event.midi.length)*voiceGain),time+.015);gain.gain.exponentialRampToValueAtTime(.001,time+Math.max(.03,seconds*.9))
       oscillator.connect(gain);gain.connect(context.destination);oscillator.start(time);oscillator.stop(time+seconds)
     }
   }
   playbackTimer=setTimeout(stop,Math.max(0,(startTime+playback.beats*beatSeconds-context.currentTime)*1000))
 }
 function stop(){playbackRevision++;if(playbackTimer)clearTimeout(playbackTimer);if(sound){void sound.close();sound=undefined}playing.value=false}
-function applySource(){try{const parsed=parseScore(sourceText.value);edit(()=>{score.value=parsed;selected.value=[];caret.value=parsed.notes.length});sourceVisible.value=false;message.value='源稿已应用'}catch{message.value='源稿无效，请检查 JSON 结构和音符数据。'}}
+function applySource(){try{const parsed=parseScore(sourceText.value);edit(()=>{score.value=parsed;syncVoice();caret.value=activeNotes.value.length});sourceVisible.value=false;message.value='源稿已应用'}catch{message.value='源稿无效，请检查 JSON 结构和音符数据。'}}
 function exportImage(){stop();if(!noteCount.value){message.value='请先录入音符或休止符。';return}emit('export',renderScore(score.value))}
 onUnmounted(stop)
 </script>
@@ -268,13 +323,20 @@ onUnmounted(stop)
         <div class="score-toolrow"><span class="score-rowlabel">时值</span><div class="score-toolgroup"><button v-for="(value,index) in durations" :key="value" type="button" :class="{active:duration===value}" :aria-label="`${value}分音符`" :title="`${value}分音符`" @click="setDuration(value)"><span>{{ ['𝅝','𝅗𝅥','♩','♪','𝅘𝅥𝅯','𝅘𝅥𝅰','𝅘𝅥𝅱'][index] }}</span><small>{{ value }}</small></button></div><div class="score-toolgroup"><button type="button" title="附点 / 复附点" @click="modify({dots:((current?.dots||0)+1)%3})">附点 ·</button><button type="button" title="清除附点" @click="modify({dots:0})">无附点</button><button type="button" title="选中三个音符后设置三连音" @click="group('tuplet')">⌜3⌝</button><button type="button" title="连音线，Shift 选择多个音符" @click="group('slur')">⌒</button></div></div>
         <div class="score-toolrow"><span class="score-rowlabel">记号</span><div class="score-toolgroup"><button type="button" title="单小节线" @click="addBar('single')">│</button><button type="button" title="双小节线" @click="addBar('double')">Ⅱ</button><button type="button" title="终止线" @click="addBar('end')">▕▏</button><button type="button" title="左反复" @click="addBar('repeatStart')">‖:</button><button type="button" title="右反复" @click="addBar('repeatEnd')">:‖</button><button type="button" title="换行 Enter" @click="insert(newNote(0,4,'break'))">↵</button></div><div class="score-toolgroup"><button v-for="mark in ['p','mp','mf','f','ff','rit.','accel.','>','•','𝄐']" :key="mark" type="button" :title="`添加 ${mark}`" @click="modify({mark})">{{ mark }}</button><button type="button" title="清除所选音符的表情记号与连线" @click="modify({mark:'',slur:undefined,tuplet:undefined})">清除记号</button></div></div>
       </div>
+      <div class="score-voices" aria-label="声部管理">
+        <span>声部</span><div class="score-segment"><button v-for="voice in voices" :key="voice.id" type="button" :class="{active:voice.id===activeVoice}" :aria-pressed="voice.id===activeVoice" :aria-label="`编辑${voice.name}`" @click="switchVoice(voice.id,true)">{{ voice.name }}{{ voice.muted?' · 静音':'' }}</button></div>
+        <button type="button" :disabled="voices.length>=4" @click="addVoice">＋ 声部</button>
+        <input aria-label="当前声部名称" :value="voices.find(voice=>voice.id===activeVoice)?.name" maxlength="32" @change="renameVoice"/>
+        <button type="button" :aria-pressed="!!voices.find(voice=>voice.id===activeVoice)?.muted" @click="muteVoice">当前声部静音</button><button type="button" :disabled="voices.length===1" @click="removeVoice">移除声部</button>
+        <label>试听<select v-model="auditionMode" aria-label="试听声部范围" @change="stop"><option value="all">全部声部合奏</option><option value="current">仅当前声部</option></select></label>
+      </div>
       <div class="score-metadata"><input aria-label="乐谱标题" :value="score.title" placeholder="未命名乐谱（点击填写标题）" @change="setMeta('title',$event)"/><label>调号<select :value="score.key" @change="setMeta('key',$event)"><option v-for="key in ['C','G','D','A','E','F','Bb','Eb']" :key="key">{{ key }}</option></select></label><label>拍号<input aria-label="每小节拍数" type="number" min="1" max="12" :value="score.beats" @change="setMeta('beats',$event)"/>/<select aria-label="拍号分母" :value="score.beatUnit" @change="setMeta('beatUnit',$event)"><option v-for="value in [2,4,8,16]" :key="value">{{ value }}</option></select></label><label>♩ = <input aria-label="速度" type="number" min="30" max="240" :value="score.tempo" @change="setMeta('tempo',$event)"/></label></div>
       <div class="score-workspace"><div ref="canvas" class="score-paper" tabindex="0" role="application" aria-label="可编辑乐谱，数字键录入，方向键调整音高，Shift 点击连选，Delete 删除" :style="{width:`${zoom}%`}" @pointerdown="pointerdown" @pointermove="pointermove" @pointerup="pointerup" @pointercancel="pointerup" @dblclick="doubleclick" v-html="svg"></div></div>
       <div v-if="currentTones.length>1 && selected.length===1" class="score-chord-inspector" aria-label="和弦音编辑">
         <span>和弦音</span><button v-for="(tone,index) in currentTones" :key="index" type="button" :class="{active:toneIndex===index}" :aria-pressed="toneIndex===index" :aria-label="`选择和弦音 ${noteName(tone.pitch)}`" @click="toneSelection={id:current!.id,index}">{{ noteName(tone.pitch) }}{{ {'#':'♯',b:'♭',n:'♮','':''}[tone.accidental] }}</button>
         <button type="button" aria-label="所选和弦音升高一音级" @click="changeTone({pitch:currentTones[toneIndex].pitch+1})">↑</button><button type="button" aria-label="所选和弦音降低一音级" @click="changeTone({pitch:currentTones[toneIndex].pitch-1})">↓</button><button type="button" @click="deleteTone">移除此和弦音</button><small>拖动音头可单独改变音高；上方面板的升降号作用于所选和弦音。</small>
       </div>
-      <div v-if="current" class="score-inspector"><strong>{{ selected.length>1?`已选 ${selected.length} 个元素`:current.kind==='note'?(currentTones.length>1?`和弦 · ${currentTones.length} 音`:noteName(current.pitch)):current.kind==='rest'?'休止符':'小节 / 换行' }}</strong><label>歌词<input aria-label="所选音符歌词" :value="current.lyric" placeholder="为所选音符填写歌词" @change="modify({lyric:($event.target as HTMLInputElement).value})"/></label><span>光标 {{ caret }} / {{ score.notes.length }}</span><button type="button" @click="selected=[]">取消选择</button></div>
+      <div v-if="current" class="score-inspector"><strong>{{ selected.length>1?`已选 ${selected.length} 个元素`:current.kind==='note'?(currentTones.length>1?`和弦 · ${currentTones.length} 音`:noteName(current.pitch)):current.kind==='rest'?'休止符':'小节 / 换行' }}</strong><label>歌词<input aria-label="所选音符歌词" :value="current.lyric" placeholder="为所选音符填写歌词" @change="modify({lyric:($event.target as HTMLInputElement).value})"/></label><span>光标 {{ caret }} / {{ activeNotes.length }}</span><button type="button" @click="selected=[]">取消选择</button></div>
       <div v-if="sourceVisible" class="score-source"><textarea v-model="sourceText" aria-label="乐谱源稿 JSON" spellcheck="false"></textarea><button type="button" @click="applySource">应用源稿</button><button type="button" @click="sourceVisible=false">收起</button></div>
       <footer class="score-footer"><span role="status">{{ message || `${noteCount} 个音符 · 源稿随题目保存` }}</span><button type="button" @click="sourceVisible=!sourceVisible;sourceText=JSON.stringify(score,null,2)">源稿</button><label>缩放<select v-model.number="zoom" aria-label="乐谱缩放"><option :value="75">75%</option><option :value="100">100%</option><option :value="125">125%</option><option :value="150">150%</option></select></label><button type="button" @click="emit('close')">返回题目</button><button type="button" class="score-export" :disabled="busy||!noteCount" @click="exportImage">{{ busy?'正在生成…':'生成题目图片' }}</button></footer>
     </section>
@@ -282,6 +344,7 @@ onUnmounted(stop)
 </template>
 
 <style scoped>
+.score-voices{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:5px 18px;background:#fff;border-bottom:1px solid #e5e9f0}.score-voices>span{font-size:10px;color:#7f899a}.score-voices>input{width:104px}.score-voices label{display:flex;align-items:center;gap:6px;margin-left:auto;color:#7f899a}.score-voices .score-segment{max-width:440px;overflow:auto}.score-voices .score-segment button{max-width:130px;overflow:hidden;text-overflow:ellipsis}
 .score-chord-inspector{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:7px 18px;border-top:1px solid #dfe5f1;background:#f8faff}.score-chord-inspector>span{margin-right:8px;color:#6b7890}.score-chord-inspector small{margin-left:8px;color:#8791a3}.score-chord-inspector button{background:#edf0f7}
 .score-backdrop{position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(23,29,40,.32);backdrop-filter:blur(10px)}
 .score-editor{display:flex;flex-direction:column;width:min(1380px,100%);height:calc(100dvh - 36px);max-height:1100px;overflow:hidden;border:1px solid #dfe3ea;border-radius:16px;background:#f6f7f9;box-shadow:0 24px 90px #18253c3d;color:#333b49;font-size:12px}

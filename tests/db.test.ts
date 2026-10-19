@@ -17,7 +17,7 @@ describe('MusicBankDatabase', () => {
     const root = mkdtempSync(join(tmpdir(), 'musicbank-test-'))
     roots.push(root)
     const database = new MusicBankDatabase(root)
-    const score = { ...emptyScore(), notes: [withChordTone(newNote(0), { pitch: 2, accidental: 'b' })] }
+    const score = { ...emptyScore(), voices: [{ id: 1, name: '旋律' }, { id: 2, name: '伴奏', muted: true }], notes: [withChordTone(newNote(0), { pitch: 2, accidental: 'b' })] }
     const notationSource = JSON.stringify(score)
     database.saveQuestion({
       id: 'MUS-TEST-001',
@@ -43,6 +43,7 @@ describe('MusicBankDatabase', () => {
     const reopened = new MusicBankDatabase(root)
     const restored = parseScore(reopened.listQuestions()[0].notationDocument)
     expect(restored.title).toBe('修改源稿')
+    expect(restored.voices).toEqual(score.voices)
     expect(restored.notes[0].chord).toEqual([{ pitch: 2, accidental: 'b' }])
     reopened.close()
     expect(question.title).toContain('♩')
