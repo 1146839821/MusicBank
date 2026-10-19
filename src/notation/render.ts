@@ -1,4 +1,4 @@
-import { keyTonic, noteName, noteTones, scoreVoices, scoreTimeline, TICKS_PER_BEAT, type ScoreDocument, type ScoreNote } from './score'
+import { keyTonic, noteName, noteTones, tieLinks, scoreVoices, scoreTimeline, TICKS_PER_BEAT, type ScoreDocument, type ScoreNote } from './score'
 export interface NotePosition { note: ScoreNote; index: number; x: number; y: number; row: number; voice: number }
 export const SCORE_WIDTH = 1000
 export const ROW_HEIGHT = 180
@@ -132,6 +132,28 @@ function bar(note: ScoreNote,x:number,y:number,staff:boolean) {
   const dots=(dx:number)=>`<circle cx="${x+dx}" cy="${top+19}" r="2"/><circle cx="${x+dx}" cy="${top+31}" r="2"/>`
   return note.bar==='end'?line(-5)+line(2,4):note.bar==='double'?line(-3)+line(3):note.bar==='repeatStart'?line(-4,3)+line(2)+dots(9):note.bar==='repeatEnd'?dots(-9)+line(-2)+line(4,3):line(0)
 }
+function renderTies(score:ScoreDocument,positions:NotePosition[],staves:{row:number;voice:number;y:number}[],start:number) {
+  const byId=new Map(positions.map(position=>[position.note.id,position])),staff=score.view==='staff'
+  let svg=''
+  const curve=(x1:number,y1:number,x2:number,y2:number,direction:number)=>`<path class="notation-tie" d="M${x1} ${y1}Q${(x1+x2)/2} ${(y1+y2)/2+direction*20} ${x2} ${y2}" fill="none" stroke="#202124" stroke-width="1.3"/>`
+  const toneY=(position:NotePosition,index:number)=>staff?position.y+60-noteTones(position.note)[index].pitch*6:position.y+36+jianpuStack(position.note,score.key).find(item=>item.index===index)!.offset
+  for(const link of tieLinks(score)) {
+    const a=byId.get(link.from),b=byId.get(link.to)
+    if(!a||!b)continue
+    const pitch=noteTones(a.note)[link.fromTone].pitch,direction=staff&&pitch>=6?-1:1
+    const offset=staff?direction*8:36,y1=toneY(a,link.fromTone)+offset,y2=toneY(b,link.toTone)+offset
+    if(a.row===b.row) svg+=curve(a.x+10,y1,b.x-10,y2,direction)
+    else {
+      svg+=curve(a.x+10,y1,938,y1,direction)
+      for(let row=a.row+1;row<b.row;row++) {
+        const stave=staves.find(stave=>stave.row===row&&stave.voice===a.voice)
+        if(stave) {const y=stave.y+(y1-a.y);svg+=curve(start-22,y,938,y,direction)}
+      }
+      svg+=curve(start-22,y2,b.x-10,y2,direction)
+    }
+  }
+  return svg
+}
 export function renderScore(score: ScoreDocument, selected: string[] = [], caret = -1, interactive = false, activeVoice = scoreVoices(score)[0].id) {
   const { positions,staves,height,top,start } = layoutScore(score)
   const staff = score.view==='staff'
@@ -177,6 +199,7 @@ export function renderScore(score: ScoreDocument, selected: string[] = [], caret
       }
     }
   }
+  body+=renderTies(score,positions,staves,start)
   if(interactive) {
     const voicePositions=positions.filter(pos=>pos.voice===activeVoice)
     const previous=voicePositions[Math.min(caret-1,voicePositions.length-1)]

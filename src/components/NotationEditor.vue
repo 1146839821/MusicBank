@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
-import { durations, emptyScore, keyTonic, newNote, noteName, scorePlayback, scoreVoices, voiceNotes, replaceVoiceNotes, addScoreVoice, removeScoreVoice, noteTones, withChordTone, updateTone, removeTone, parseScore, transposeNotes, type Duration, type ScoreDocument, type ScoreNote } from '../notation/score'
+import { durations, emptyScore, keyTonic, newNote, noteName, scorePlayback, toggleTies, normalizeTies, disconnectTies, duplicateNotes, scoreVoices, voiceNotes, replaceVoiceNotes, addScoreVoice, removeScoreVoice, noteTones, withChordTone, updateTone, removeTone, parseScore, transposeNotes, type Duration, type ScoreDocument, type ScoreNote } from '../notation/score'
 import { layoutScore, renderScore } from '../notation/render'
 
 const props = defineProps<{ source: string; busy?: boolean }>()
@@ -79,6 +79,7 @@ function spliceVoice(index: number, count: number, ...notes: ScoreNote[]) {
   score.value=replaceVoiceNotes(score.value,activeVoice.value,items)
 }
 function save(before: string) {
+  score.value=normalizeTies(score.value)
   if(before===JSON.stringify(score.value)) return
   history.value.push(before)
   if(history.value.length>100) history.value.shift()
@@ -115,7 +116,7 @@ function insert(note: ScoreNote) {
   if (score.value.notes.length >= 2000 && !(mode.value === 'replace' && current.value && ['note','rest'].includes(note.kind))) { message.value='单份乐谱最多支持 2000 个元素。'; return }
   edit(()=>{
     if(mode.value==='replace' && current.value && (note.kind==='note'||note.kind==='rest')) {
-      Object.assign(current.value,{kind:note.kind,pitch:note.pitch,duration:note.duration,chord:undefined})
+      Object.assign(current.value,{kind:note.kind,pitch:note.pitch,duration:note.duration,chord:undefined,tieTo:undefined})
     } else {
       spliceVoice(caret.value,0,note); caret.value++; selected.value=[note.id]
     }
@@ -162,6 +163,16 @@ function deleteSelection(backward = false) {
   })
 }
 function addBar(bar: ScoreNote['bar']) { const note=newNote(0,duration.value,'bar'); note.bar=bar;insert(note) }
+function tieSelection() {
+  try { const updated=toggleTies(score.value,selected.value);edit(()=>{score.value=updated}) }
+  catch(error) { message.value=(error as Error).message }
+}
+function clearMarks() {
+  edit(()=>{
+    score.value=disconnectTies(score.value,selected.value)
+    score.value.notes.forEach(note=>{if(selected.value.includes(note.id)){note.mark='';note.slur=undefined;note.tuplet=undefined}})
+  })
+}
 function group(field: 'slur'|'tuplet') {
   const notes=score.value.notes.filter(n=>selected.value.includes(n.id)&&n.kind==='note')
   if(notes.length<(field==='tuplet'?3:2)) { message.value=field==='tuplet'?'按住 Shift 选择三个音符后设置三连音。':'按住 Shift 选择至少两个音符。';return }
@@ -179,12 +190,7 @@ function paste() {
   if(!copied.value.length)return
   if(score.value.notes.length + copied.value.length > 2000) { message.value='粘贴后超过单份乐谱 2000 个元素的限制。'; return }
   edit(()=>{
-    const groups=new Map<string,string>()
-    const notes=copied.value.map(n=>{
-      const note={...n,chord:n.chord?.map(tone=>({...tone})),id:crypto.randomUUID()}
-      for(const field of ['slur','tuplet'] as const)if(note[field]){if(!groups.has(note[field]!))groups.set(note[field]!,crypto.randomUUID());note[field]=groups.get(note[field]!)}
-      return note
-    })
+    const notes=duplicateNotes(copied.value)
     spliceVoice(caret.value,0,...notes);caret.value+=notes.length;selected.value=notes.map(n=>n.id)
   })
 }
@@ -320,8 +326,8 @@ onUnmounted(stop)
       </div>
       <div class="score-palette" aria-label="乐谱工具面板">
         <div class="score-toolrow"><span class="score-rowlabel">音高</span><div class="score-toolgroup"><button v-for="degree in [1,2,3,4,5,6,7,0]" :key="degree" type="button" :title="degree?`录入 ${degree} / ${'CDEFGAB'[degree-1]}`:'休止符 0'" @click="pitch(degree)">{{ degree }}</button></div><div class="score-toolgroup"><button type="button" title="升高一音级 ↑" @click="transpose(1)">↑</button><button type="button" title="降低一音级 ↓" @click="transpose(-1)">↓</button><button type="button" title="升高八度 Shift ↑" @click="transpose(7)">8↑</button><button type="button" title="降低八度 Shift ↓" @click="transpose(-7)">8↓</button></div><div class="score-toolgroup"><button v-for="(glyph,accidentalKey) in {'#':'♯',b:'♭',n:'♮'}" :key="accidentalKey" type="button" :title="glyph" @click="accidental(accidentalKey as ScoreNote['accidental'])">{{ glyph }}</button><button type="button" title="清除临时升降号" @click="accidental('')">原音</button></div></div>
-        <div class="score-toolrow"><span class="score-rowlabel">时值</span><div class="score-toolgroup"><button v-for="(value,index) in durations" :key="value" type="button" :class="{active:duration===value}" :aria-label="`${value}分音符`" :title="`${value}分音符`" @click="setDuration(value)"><span>{{ ['𝅝','𝅗𝅥','♩','♪','𝅘𝅥𝅯','𝅘𝅥𝅰','𝅘𝅥𝅱'][index] }}</span><small>{{ value }}</small></button></div><div class="score-toolgroup"><button type="button" title="附点 / 复附点" @click="modify({dots:((current?.dots||0)+1)%3})">附点 ·</button><button type="button" title="清除附点" @click="modify({dots:0})">无附点</button><button type="button" title="选中三个音符后设置三连音" @click="group('tuplet')">⌜3⌝</button><button type="button" title="连音线，Shift 选择多个音符" @click="group('slur')">⌒</button></div></div>
-        <div class="score-toolrow"><span class="score-rowlabel">记号</span><div class="score-toolgroup"><button type="button" title="单小节线" @click="addBar('single')">│</button><button type="button" title="双小节线" @click="addBar('double')">Ⅱ</button><button type="button" title="终止线" @click="addBar('end')">▕▏</button><button type="button" title="左反复" @click="addBar('repeatStart')">‖:</button><button type="button" title="右反复" @click="addBar('repeatEnd')">:‖</button><button type="button" title="换行 Enter" @click="insert(newNote(0,4,'break'))">↵</button></div><div class="score-toolgroup"><button v-for="mark in ['p','mp','mf','f','ff','rit.','accel.','>','•','𝄐']" :key="mark" type="button" :title="`添加 ${mark}`" @click="modify({mark})">{{ mark }}</button><button type="button" title="清除所选音符的表情记号与连线" @click="modify({mark:'',slur:undefined,tuplet:undefined})">清除记号</button></div></div>
+        <div class="score-toolrow"><span class="score-rowlabel">时值</span><div class="score-toolgroup"><button v-for="(value,index) in durations" :key="value" type="button" :class="{active:duration===value}" :aria-label="`${value}分音符`" :title="`${value}分音符`" @click="setDuration(value)"><span>{{ ['𝅝','𝅗𝅥','♩','♪','𝅘𝅥𝅯','𝅘𝅥𝅰','𝅘𝅥𝅱'][index] }}</span><small>{{ value }}</small></button></div><div class="score-toolgroup"><button type="button" title="附点 / 复附点" @click="modify({dots:((current?.dots||0)+1)%3})">附点 ·</button><button type="button" title="清除附点" @click="modify({dots:0})">无附点</button><button type="button" title="选中三个音符后设置三连音" @click="group('tuplet')">⌜3⌝</button><button type="button" title="连音线，Shift 选择多个音符" @click="group('slur')">⌒</button><button type="button" aria-label="延音线" title="选择相邻同音音符，连接或取消延音线" @click="tieSelection">延音 ⌢</button></div></div>
+        <div class="score-toolrow"><span class="score-rowlabel">记号</span><div class="score-toolgroup"><button type="button" title="单小节线" @click="addBar('single')">│</button><button type="button" title="双小节线" @click="addBar('double')">Ⅱ</button><button type="button" title="终止线" @click="addBar('end')">▕▏</button><button type="button" title="左反复" @click="addBar('repeatStart')">‖:</button><button type="button" title="右反复" @click="addBar('repeatEnd')">:‖</button><button type="button" title="换行 Enter" @click="insert(newNote(0,4,'break'))">↵</button></div><div class="score-toolgroup"><button v-for="mark in ['p','mp','mf','f','ff','rit.','accel.','>','•','𝄐']" :key="mark" type="button" :title="`添加 ${mark}`" @click="modify({mark})">{{ mark }}</button><button type="button" title="清除所选音符的表情记号与连线" @click="clearMarks">清除记号</button></div></div>
       </div>
       <div class="score-voices" aria-label="声部管理">
         <span>声部</span><div class="score-segment"><button v-for="voice in voices" :key="voice.id" type="button" :class="{active:voice.id===activeVoice}" :aria-pressed="voice.id===activeVoice" :aria-label="`编辑${voice.name}`" @click="switchVoice(voice.id,true)">{{ voice.name }}{{ voice.muted?' · 静音':'' }}</button></div>

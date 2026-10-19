@@ -3,6 +3,7 @@ export type Duration = 1 | 2 | 4 | 8 | 16 | 32 | 64
 export interface ScorePitch {
   pitch: number
   accidental: '' | '#' | 'b' | 'n'
+  tieTo?: string
 }
 export interface ScoreVoice { id: number; name: string; muted?: boolean }
 export interface ScoreNote {
@@ -13,6 +14,7 @@ export interface ScoreNote {
   duration: Duration
   dots: number
   accidental: '' | '#' | 'b' | 'n'
+  tieTo?: string
   chord?: ScorePitch[] // Additional simultaneous pitches; the primary pitch remains compatible with old scores.
   lyric: string
   mark: string
@@ -55,23 +57,25 @@ export function parseScore(source?: string): ScoreDocument {
     if (!note || (note.voice !== undefined && !Number.isInteger(note.voice)) || !voiceIds.has(note.voice ?? 1) || typeof note.id !== 'string' || ids.has(note.id) || !['note','rest','bar','break'].includes(note.kind)
       || !Number.isInteger(note.pitch) || note.pitch < -14 || note.pitch > 28 || !durations.includes(note.duration)
       || ![0,1,2].includes(note.dots) || !['','#','b','n'].includes(note.accidental)
+      || (note.tieTo !== undefined && (note.kind !== 'note' || typeof note.tieTo !== 'string'))
       || typeof note.lyric !== 'string' || typeof note.mark !== 'string'
       || (note.slur !== undefined && typeof note.slur !== 'string') || (note.tuplet !== undefined && typeof note.tuplet !== 'string')
       || (note.bar !== undefined && !['single','double','end','repeatStart','repeatEnd'].includes(note.bar))) throw new Error('无效的乐谱音符')
     if (note.chord !== undefined) {
       if (note.kind !== 'note' || !Array.isArray(note.chord) || note.chord.length > 7
-        || note.chord.some(tone => !tone || !Number.isInteger(tone.pitch) || tone.pitch < -14 || tone.pitch > 28 || !['','#','b','n'].includes(tone.accidental))
+        || note.chord.some(tone => !tone || !Number.isInteger(tone.pitch) || tone.pitch < -14 || tone.pitch > 28 || !['','#','b','n'].includes(tone.accidental) || (tone.tieTo !== undefined && typeof tone.tieTo !== 'string'))
         || new Set(noteTones(note).map(tone => tone.pitch)).size !== noteTones(note).length) throw new Error('无效的和弦音')
     }
     ids.add(note.id)
   }
+  if (JSON.stringify(normalizeTies(value)) !== JSON.stringify(value)) throw new Error('延音线必须连接同声部相邻音符中的相同音高')
   return value
 }
 export function noteBeats(note: ScoreNote) {
   return note.kind === 'bar' || note.kind === 'break' ? 0 : 4 / note.duration * (note.dots === 2 ? 1.75 : note.dots === 1 ? 1.5 : 1) * (note.tuplet ? 2 / 3 : 1)
 }
 export function noteTones(note: ScoreNote): ScorePitch[] {
-  return [{ pitch: note.pitch, accidental: note.accidental }, ...(note.chord || []).map(tone => ({ ...tone }))]
+  return [{ pitch: note.pitch, accidental: note.accidental, ...(note.tieTo !== undefined ? {tieTo:note.tieTo} : {}) }, ...(note.chord || []).map(tone => ({ ...tone }))]
 }
 export function withChordTone(note: ScoreNote, tone: ScorePitch): ScoreNote {
   if (note.kind !== 'note') throw new Error('请选择一个音符来叠加和弦。')
@@ -86,13 +90,13 @@ export function updateTone(note: ScoreNote, index: number, change: Partial<Score
   tones[index] = { ...tones[index], ...change }
   if (tones.some(tone => !Number.isInteger(tone.pitch) || tone.pitch < -14 || tone.pitch > 28)
     || new Set(tones.map(tone => tone.pitch)).size !== tones.length) throw new Error('音高超出范围或与其他和弦音重合。')
-  return { ...note, ...tones[0], chord: tones.length > 1 ? tones.slice(1) : undefined }
+  return { ...note, ...tones[0], tieTo:tones[0].tieTo, chord: tones.length > 1 ? tones.slice(1) : undefined }
 }
 export function removeTone(note: ScoreNote, index: number): ScoreNote {
   const tones = noteTones(note)
   if (tones.length === 1 || !tones[index]) return note
   tones.splice(index, 1)
-  return { ...note, ...tones[0], chord: tones.length > 1 ? tones.slice(1) : undefined }
+  return { ...note, ...tones[0], tieTo:tones[0].tieTo, chord: tones.length > 1 ? tones.slice(1) : undefined }
 }
 export function transposeNotes(notes: ScoreNote[], amount: number): ScoreNote[] {
   const pitches = notes.filter(note => note.kind === 'note').flatMap(note => noteTones(note).map(tone => tone.pitch))
@@ -150,16 +154,110 @@ export function scoreTimeline(score: ScoreDocument) {
     return { note, index, voice, tick, ticks }
   })
 }
+export function resolvedScore(score: ScoreDocument) {
+  const registers=new Map<number,Map<number,ScorePitch['accidental']>>()
+  const previous=new Map<number,{id:string;tones:(ScorePitch & {midi:number})[]}>()
+  return scoreTimeline(score).map(item=>{
+    const register=registers.get(item.voice)||new Map<number,ScorePitch['accidental']>()
+    registers.set(item.voice,register)
+    if(item.note.kind==='bar') register.clear()
+    const tones=item.note.kind==='note'?noteTones(item.note).map(tone=>{
+      const inherited=previous.get(item.voice)?.tones.find(source=>source.tieTo===item.note.id&&source.pitch===tone.pitch)
+      const accidental=tone.accidental||register.get(tone.pitch)||''
+      let midi=pitchMidi({...tone,accidental},score.key)
+      if(inherited&&!tone.accidental) midi=inherited.midi
+      if(tone.accidental) register.set(tone.pitch,tone.accidental)
+      return {...tone,midi}
+    }):[]
+    if(item.note.kind==='note'||item.note.kind==='rest') previous.set(item.voice,{id:item.note.id,tones})
+    return {...item,tones}
+  })
+}
+export interface TieLink { from:string; to:string; fromTone:number; toTone:number }
+function linksFromResolved(resolved: ReturnType<typeof resolvedScore>): TieLink[] {
+  const links:TieLink[]=[],previous=new Map<number,(typeof resolved)[number]>()
+  for(const item of resolved) {
+    if(item.note.kind!=='note'&&item.note.kind!=='rest') continue
+    const source=previous.get(item.voice)
+    if(source&&item.note.kind==='note') source.tones.forEach((tone,index)=>{
+      if(tone.tieTo!==item.note.id)return
+      const target=item.tones.findIndex(target=>target.pitch===tone.pitch&&target.midi===tone.midi)
+      if(target>=0)links.push({from:source.note.id,to:item.note.id,fromTone:index,toTone:target})
+    })
+    previous.set(item.voice,item)
+  }
+  return links
+}
+export function tieLinks(score:ScoreDocument) { return linksFromResolved(resolvedScore(score)) }
+export function normalizeTies(score:ScoreDocument): ScoreDocument {
+  const valid=new Set(tieLinks(score).map(link=>`${link.from}:${link.fromTone}`))
+  return {...score,notes:score.notes.map(note=>{
+    if(note.tieTo===undefined&&!note.chord?.some(tone=>tone.tieTo!==undefined))return note
+    return {...note,tieTo:valid.has(`${note.id}:0`)?note.tieTo:undefined,chord:note.chord?.map((tone,index)=>({...tone,tieTo:valid.has(`${note.id}:${index+1}`)?tone.tieTo:undefined}))}
+  })}
+}
+export function disconnectTies(score:ScoreDocument,ids:string[]):ScoreDocument {
+  const selected=new Set(ids)
+  const clear=(tone:ScorePitch,id:string)=>({...tone,tieTo:selected.has(id)||(tone.tieTo&&selected.has(tone.tieTo))?undefined:tone.tieTo})
+  return {...score,notes:score.notes.map(note=>({...note,...clear(note,note.id),chord:note.chord?.map(tone=>clear(tone,note.id))}))}
+}
+export function toggleTies(score:ScoreDocument,ids:string[]):ScoreDocument {
+  const selected=new Set(ids),rhythm=resolvedScore(score).filter(item=>item.note.kind==='note'||item.note.kind==='rest')
+  const notes=rhythm.filter(item=>selected.has(item.note.id))
+  if(notes.length<2||notes.some(item=>item.note.kind!=='note')||new Set(notes.map(item=>item.voice)).size!==1) throw new Error('请选择同声部至少两个相邻音符。')
+  const voice=rhythm.filter(item=>item.voice===notes[0].voice),start=voice.indexOf(notes[0])
+  if(voice.slice(start,start+notes.length).some((item,index)=>item.note.id!==notes[index].note.id))throw new Error('延音线不能跨过未选择的音符或休止符。')
+  const existing=tieLinks(score)
+  const remove=notes.slice(0,-1).every((item,index)=>existing.some(link=>link.from===item.note.id&&link.to===notes[index+1].note.id))
+  const changes=new Map<string,ScoreNote>()
+  for(let i=0;i<notes.length-1;i++) {
+    const source=notes[i],target=notes[i+1]
+    const tones=noteTones(source.note)
+    let matches=0
+    tones.forEach((tone,index)=>{
+      const matching=target.tones.find(t=>t.pitch===tone.pitch&&(!t.accidental||t.midi===source.tones[index].midi))
+      if(matching){tone.tieTo=remove?undefined:target.note.id;if(!remove&&!matching.accidental)matching.midi=source.tones[index].midi;matches++}
+    })
+    if(!matches)throw new Error('相邻音符没有可延续的相同音高；不同音高请使用连音线。')
+    changes.set(source.note.id,{...source.note,...tones[0],tieTo:tones[0].tieTo,chord:tones.length>1?tones.slice(1):undefined})
+  }
+  return normalizeTies({...score,notes:score.notes.map(note=>changes.get(note.id)||note)})
+}
+export function duplicateNotes(notes:ScoreNote[]):ScoreNote[] {
+  const ids=new Map(notes.map(note=>[note.id,crypto.randomUUID()])),groups=new Map<string,string>()
+  const cloneTone=(tone:ScorePitch)=>({...tone,tieTo:tone.tieTo?ids.get(tone.tieTo):undefined})
+  return notes.map(source=>{
+    const note={...source,...cloneTone(source),id:ids.get(source.id)!,chord:source.chord?.map(cloneTone)}
+    for(const field of ['slur','tuplet'] as const)if(note[field]){
+      if(!groups.has(note[field]!))groups.set(note[field]!,crypto.randomUUID())
+      note[field]=groups.get(note[field]!)
+    }
+    return note
+  })
+}
 export function scorePlayback(score: ScoreDocument, onlyVoice?: number) {
   const voices = scoreVoices(score).filter(voice => onlyVoice === undefined || voice.id === onlyVoice)
-  const events: { start: number; beats: number; midi: number[] }[] = []
-  let ticks = 0
-  for (const item of scoreTimeline(score)) {
-    const voice = voices.find(voice => voice.id === item.voice)
-    if (!voice) continue
-    ticks = Math.max(ticks,item.tick+item.ticks)
-    if (item.note.kind === 'note' && !voice.muted) events.push({ start: item.tick/TICKS_PER_BEAT, beats: item.ticks/TICKS_PER_BEAT, midi: noteTones(item.note).map(tone => pitchMidi(tone, score.key)) })
+  const resolved=resolvedScore(score),links=linksFromResolved(resolved)
+  const incoming=new Map(links.map(link=>[`${link.to}:${link.toTone}`,`${link.from}:${link.fromTone}`]))
+  const chains:{voice:number;tick:number;ticks:number;midi:number}[]=[],byTone=new Map<string,(typeof chains)[number]>()
+  let ticks=0
+  for(const item of resolved){
+    const voice=voices.find(voice=>voice.id===item.voice)
+    if(!voice)continue
+    ticks=Math.max(ticks,item.tick+item.ticks)
+    if(voice.muted)continue
+    item.tones.forEach((tone,index)=>{
+      const key=`${item.note.id}:${index}`,prior=incoming.get(key),chain=prior?byTone.get(prior):undefined
+      if(chain){chain.ticks+=item.ticks;byTone.set(key,chain)}
+      else{const event={voice:item.voice,tick:item.tick,ticks:item.ticks,midi:tone.midi};chains.push(event);byTone.set(key,event)}
+    })
   }
-  events.sort((a,b) => a.start-b.start)
-  return { events, beats: ticks/TICKS_PER_BEAT }
+  const groups=new Map<string,{start:number;beats:number;midi:number[]}>()
+  for(const chain of chains){
+    const key=`${chain.voice}:${chain.tick}:${chain.ticks}`,event=groups.get(key)
+    if(event)event.midi.push(chain.midi)
+    else groups.set(key,{start:chain.tick/TICKS_PER_BEAT,beats:chain.ticks/TICKS_PER_BEAT,midi:[chain.midi]})
+  }
+  const events=[...groups.values()].sort((a,b)=>a.start-b.start)
+  return {events,beats:ticks/TICKS_PER_BEAT}
 }
