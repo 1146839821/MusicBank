@@ -27,5 +27,11 @@ describe('template persistence and judgment migration',()=>{
     db.restoreBackupRecords(payload);expect(db.templateBytes('t')).toEqual(Buffer.from([1,2,3]));expect(()=>db.restoreBackupRecords({...payload,templates:[{record:{...record,fileSize:99},bytesBase64:'AQID'}]})).toThrow();expect(db.listTemplates()).toHaveLength(1)
     db.restoreBackupRecords({...payload,templates:undefined});expect(db.listTemplates(true)).toHaveLength(0);db.close()
   })
+  it('round trips question emphasis through database',()=>{
+    const {db}=fresh(),titleRuns=[{text:'判断',bold:true},{text:'试题',italic:true}]
+    db.saveQuestion({...q,titleRuns})
+    expect(db.listQuestions()[0].titleRuns).toEqual(titleRuns)
+    db.close()
+  })
   it('rejects ambiguous judgment answer values',()=>{const {db}=fresh();for(const correctAnswer of ['',undefined,'0','错误'])expect(()=>db.saveQuestion({...q,type:'判断题',correctAnswer})).toThrow();db.close()})
 })

@@ -1,3 +1,4 @@
+export interface TextRun { text: string; bold?: boolean; italic?: boolean }
 export type QuestionType = '选择题' | '填空题' | '判断题' | '简答题'
 export type ChoiceMode = 'single' | 'multiple'
 
@@ -10,6 +11,7 @@ export interface UserProfile {
 export interface QuestionRecord {
   id: string
   title: string
+  titleRuns?: TextRun[]
   grade: string
   category: string
   subcategory?: string

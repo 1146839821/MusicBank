@@ -1,6 +1,6 @@
 import JSZip from 'jszip'
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom'
-import type { DocumentKind, PaperRecord, QuestionType, TemplateSummary } from './types.js'
+import type { DocumentKind, PaperRecord, QuestionType, TemplateSummary, TextRun } from './types.js'
 
 const W='http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 const R='http://schemas.openxmlformats.org/package/2006/relationships'
@@ -74,8 +74,10 @@ export function answerText(question:PaperRecord['items'][number]['snapshot']){
   if(question.type==='填空题')return (question.fillAnswers||[]).join('；')||'未设置答案'
   return question.referenceAnswer||'未设置参考答案'
 }
-function paragraph(value:string,options:{bold?:boolean;size?:number;space?:number;keepNext?:boolean}={}){
-  return `<w:p><w:pPr><w:snapToGrid w:val="0"/><w:spacing w:before="0" w:after="${options.space??120}" w:line="300" w:lineRule="auto"/>${options.keepNext?'<w:keepNext/>':''}<w:keepLines/><w:widowControl/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:eastAsia="宋体"/><w:sz w:val="${options.size||24}"/>${options.bold?'<w:b/>':''}</w:rPr>${value.split('\n').map(line=>`<w:t xml:space="preserve">${xmlEscape(line)}</w:t>`).join('<w:br/>')}</w:r></w:p>`
+function paragraph(value:string,options:{bold?:boolean;size?:number;space?:number;keepNext?:boolean;runs?:TextRun[]}={}){
+  const runs=options.runs?.map(run=>run.text).join('')===value?options.runs:[{text:value,bold:options.bold}]
+  const content=runs!.map(run=>`<w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:eastAsia="宋体"/><w:sz w:val="${options.size||24}"/>${run.bold?'<w:b/>':''}${run.italic?'<w:i/>':''}</w:rPr>${run.text.split('\n').map(line=>`<w:t xml:space="preserve">${xmlEscape(line)}</w:t>`).join('<w:br/>')}</w:r>`).join('')
+  return `<w:p><w:pPr><w:snapToGrid w:val="0"/><w:spacing w:before="0" w:after="${options.space??80}" w:line="380" w:lineRule="exact"/>${options.keepNext?'<w:keepNext/>':''}<w:keepLines/><w:widowControl/></w:pPr>${content}</w:p>`
 }
 export type ImageResolver=(id:string)=>Promise<{bytes:Uint8Array;width:number;height:number}>
 export async function buildPaperDocument(bytes:Uint8Array,paper:PaperRecord,kind:DocumentKind,resolveImage?:ImageResolver):Promise<Uint8Array>{
@@ -116,7 +118,9 @@ export async function buildPaperDocument(bytes:Uint8Array,paper:PaperRecord,kind
   async function questionXml(item:PaperRecord['items'][number]){
     const q=item.snapshot,label=`${item.position}. `
     if(kind==='answers')return paragraph(`${label}${answerText(q)}（${item.score} 分）`,{bold:true})+(q.explanation?paragraph(`解析：${q.explanation}`):'')
-    let xml=paragraph(`${label}${q.title}${q.type==='选择题'&&q.answerMode==='multiple'?'（多选）':''}（${item.score} 分）`,{keepNext:true})
+    const suffix=`${q.type==='选择题'&&q.answerMode==='multiple'?'（多选）':''}${q.type==='选择题'?'（　　）':''}（${item.score} 分）`
+    const titleRuns=q.titleRuns?.map(run=>run.text).join('')===q.title?q.titleRuns:[{text:q.title}]
+    let xml=paragraph(`${label}${q.title}${suffix}`,{keepNext:true,runs:[{text:label},...titleRuns!,{text:suffix}]})
     if(q.imageAssetId){
       if(!resolveImage)throw new Error(`第 ${item.position} 题的图片无法读取`)
       const image=await resolveImage(q.imageAssetId)

@@ -12,10 +12,21 @@ const question=(type:QuestionRecord['type'],id=type):QuestionRecord=>({id,title:
 function paper():PaperRecord{return {id:'paper',name:'音乐期末考试',grade:'六年级',totalScore:8,durationMinutes:40,examInfo:{school:'实验小学',schoolYear:'2026学年',term:'第一学期',subject:'音乐',examDate:'2026-12-01',instructions:'认真作答'},items:([ '填空题','选择题','判断题','简答题'] as const).map((type,index)=>({position:index+1,questionId:type,score:2,snapshot:question(type)}))}}
 async function xml(bytes:Uint8Array){return (await JSZip.loadAsync(bytes)).file('word/document.xml')!.async('string')}
 describe('real Word exam templates',()=>{
+  it('provides a choice answer blank and 19pt body leading while preserving bold and italic text',async()=>{
+    const exam=paper(),q=exam.items[1].snapshot
+    q.titleRuns=[{text:'选择题',bold:true},{text:'测试题',italic:true}]
+    const student=await xml(await buildPaperDocument(await template(),exam,'paper'))
+    expect(student).toContain('（　　）（2 分）')
+    expect(student).toContain('w:line="380" w:lineRule="exact"')
+    expect(student).toMatch(/<w:b\/><\/w:rPr><w:t xml:space="preserve">选择题<\/w:t>/)
+    expect(student).toMatch(/<w:i\/><\/w:rPr><w:t xml:space="preserve">测试题<\/w:t>/)
+    const answers=await xml(await buildPaperDocument(await template(),exam,'answers'))
+    expect(answers).not.toContain('（　　）')
+  })
   it('recognizes template order and page size',async()=>{const result=await inspectTemplate(await template());expect(result.sectionOrder).toEqual(['填空题','选择题','判断题','简答题']);expect(result.pageWidth).toBeCloseTo(210,0)})
   it('generates independent student and answer documents without leaking answers',async()=>{
     const source=await template(),exam=paper(),student=await xml(await buildPaperDocument(source,exam,'paper')),answers=await xml(await buildPaperDocument(source,exam,'answers'))
-    expect(student).toContain('实验小学');expect(student).toContain('音乐期末考试');expect(student).toContain('4. 简答题测试题');expect(student).toContain('每题 2 分');expect(student).toContain('选项甲');expect(student).toContain('判断：（')
+    expect(student).toContain('实验小学');expect(student).toContain('音乐期末考试');expect(student.replace(/<[^>]+>/g,'')).toContain('4. 简答题测试题');expect(student).toContain('每题 2 分');expect(student).toContain('选项甲');expect(student).toContain('判断：（')
     for(const secret of ['答案解析内容','参考简答内容','旧题不应保留','旧答案不应保留','参考答案'])expect(student).not.toContain(secret)
     expect(answers).toContain('错误（×）');expect(answers).toContain('参考简答内容');expect(answers).toContain('答案解析内容');expect(answers).not.toContain('选项甲');expect(student).toContain('<w:sectPr>')
   })

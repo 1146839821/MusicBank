@@ -4,6 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { registerDocumentHandlers } from './document-handlers.js'
+import { ensureDefaultTemplate } from './default-template.js'
 import { inspectTemplate } from './paper-documents.js'
 import { restoreBackup } from './restore-backup.js'
 import { isBackupAssetFilename, verifyBackupAssetBytes } from './backup-validation.js'
@@ -36,8 +37,9 @@ function createWindow() {
   return window
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   database = new MusicBankDatabase(app.getPath('userData'))
+  await ensureDefaultTemplate(database, () => readFileSync(join(electronDir, app.isPackaged ? '../dist/templates/试卷模板.docx' : '../public/templates/试卷模板.docx')))
   registerDocumentHandlers(database)
   protocol.handle('musicbank-asset', async (request) => {
     const id = decodeURIComponent(new URL(request.url).hostname || new URL(request.url).pathname.replace(/^\//, ''))
