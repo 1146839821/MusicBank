@@ -1,19 +1,35 @@
-import { keyTonic, noteName, type ScoreDocument, type ScoreNote } from './score'
+import { keyTonic, noteName, noteTones, type ScoreDocument, type ScoreNote } from './score'
 export interface NotePosition { note: ScoreNote; index: number; x: number; y: number; row: number }
 export const SCORE_WIDTH = 1000
 export const ROW_HEIGHT = 180
 export function escapeXml(value: string) {
   return value.replace(/[<>&"']/g, (character) => ({ '<':'&lt;', '>':'&gt;', '&':'&amp;', '"':'&quot;', "'":'&apos;' }[character]!))
 }
+function jianpuStack(note: ScoreNote, key: string) {
+  const tones = noteTones(note).map((tone,index) => ({ tone,index,offset:0 })).sort((a,b) => a.tone.pitch-b.tone.pitch)
+  for (let i=1;i<tones.length;i++) {
+    const previousOctave = Math.floor((tones[i-1].tone.pitch-keyTonic(key))/7)
+    const octave = Math.floor((tones[i].tone.pitch-keyTonic(key))/7)
+    const above = previousOctave > 0 ? 34+(previousOctave-1)*7 : 23
+    const below = octave < 0 ? 24+(-octave-1)*7 : 7+Math.max(0,Math.log2(note.duration)-2)*5
+    tones[i].offset = tones[i-1].offset - Math.max(44,above+below+12)
+  }
+  return tones
+}
+function chordRise(note: ScoreNote, key: string) { return Math.max(0,...jianpuStack(note,key).map(item => -item.offset)) }
+function decorationY(note: ScoreNote, y: number, staff: boolean, key: string) {
+  return staff ? Math.min(y-26,y+15-Math.max(...noteTones(note).map(tone => tone.pitch))*6) : y-26-chordRise(note,key)
+}
 export function layoutScore(score: ScoreDocument) {
   const positions: NotePosition[] = []
-  const start = score.view === 'staff' ? 202 : 130
-  const pitches = score.notes.filter(n => n.kind === 'note').map(n => n.pitch)
+  const start = score.view === 'staff' ? 234 : 130
+  const pitches = score.notes.filter(n => n.kind === 'note').flatMap(n => noteTones(n).map(tone => tone.pitch))
   const high = Math.max(0,...pitches), low = Math.min(0,...pitches)
-  const top = score.view === 'staff' ? 160 + Math.max(0,high*6-72) : 160
-  const rowHeight = score.view === 'staff' ? Math.max(ROW_HEIGHT,(high-low)*6+100,140-low*6,high*6+70) : ROW_HEIGHT
+  const rise = Math.max(0,...score.notes.filter(n => n.kind === 'note').map(n => chordRise(n,score.key)))
+  const top = score.view === 'staff' ? 160 + Math.max(0,high*6-40) : 160 + rise
+  const rowHeight = score.view === 'staff' ? Math.max(ROW_HEIGHT,(high-low)*6+100,140-low*6,high*6+70) : ROW_HEIGHT + rise
   let x = start, row = 0
-  const widthOf = (note: ScoreNote) => note.kind === 'bar' ? 26 : Math.max(note.duration === 1 ? 112 : note.duration === 2 ? 72 : 54, Math.min(160, note.lyric.length * 17 + 20))
+  const widthOf = (note: ScoreNote) => note.kind === 'bar' ? 26 : Math.max(note.chord?.length ? 80 : 0, note.duration === 1 ? 112 : note.duration === 2 ? 72 : 54, Math.min(160, note.lyric.length * 17 + 20))
   score.notes.forEach((note, index) => {
     const measureStart = index === 0 || ['bar','break'].includes(score.notes[index-1].kind)
     let measureWidth = 0
@@ -34,28 +50,34 @@ export function layoutScore(score: ScoreDocument) {
     positions.push({ note, index, x, y: top + row * rowHeight, row })
     x += widthOf(note)
   })
-  return { positions, rows: row + 1, top, rowHeight, height: Math.max(390, top + 70 + (row + 1) * rowHeight) }
+  return { positions, rows: row + 1, start, top, rowHeight, height: Math.max(390, top + 70 + (row + 1) * rowHeight) }
 }
-function staffNote(note: ScoreNote, x: number, top: number) {
-  const y = top + 60 - note.pitch * 6
+function staffNote(note: ScoreNote, x: number, top: number, interactive: boolean) {
+  const tones = noteTones(note).map((tone,index) => ({...tone,index})).sort((a,b) => a.pitch-b.pitch)
+  const down = (tones[0].pitch+tones[tones.length-1].pitch)/2 >= 6
   const hollow = note.duration <= 2
-  let svg = ''
-  if (note.pitch <= 0) for (let ledger = 0; ledger >= note.pitch; ledger -= 2) svg += `<path d="M${x-12} ${top+60-ledger*6}h24" stroke="#202124"/>`
-  if (note.pitch >= 12) for (let ledger = 12; ledger <= note.pitch; ledger += 2) svg += `<path d="M${x-12} ${top+60-ledger*6}h24" stroke="#202124"/>`
-  svg += `<ellipse cx="${x}" cy="${y}" rx="7" ry="4.8" transform="rotate(-20 ${x} ${y})" fill="${hollow?'white':'#202124'}" stroke="#202124" stroke-width="1.6"/>`
+  let svg = '', shifted = false
+  tones.forEach((tone,i) => {
+    shifted = i > 0 && tone.pitch-tones[i-1].pitch === 1 ? !shifted : false
+    const headX = x + (shifted ? down ? -12 : 12 : 0)
+    const y = top+60-tone.pitch*6
+    if (interactive) svg += `<g data-tone-index="${tone.index}"><circle cx="${headX}" cy="${y}" r="10" fill="transparent"/>`
+    if (tone.pitch <= 0) for (let ledger=0;ledger>=tone.pitch;ledger-=2) svg += `<path d="M${headX-12} ${top+60-ledger*6}h24" stroke="#202124"/>`
+    if (tone.pitch >= 12) for (let ledger=12;ledger<=tone.pitch;ledger+=2) svg += `<path d="M${headX-12} ${top+60-ledger*6}h24" stroke="#202124"/>`
+    svg += `<ellipse cx="${headX}" cy="${y}" rx="7" ry="4.8" transform="rotate(-20 ${headX} ${y})" fill="${hollow?'white':'#202124'}" stroke="#202124" stroke-width="1.6"/>`
+    if (tone.accidental) svg += `<text x="${x-22-(i%3)*10}" y="${y+7}" font-size="22">${{'#':'♯',b:'♭',n:'♮'}[tone.accidental]}</text>`
+    for(let dot=0;dot<note.dots;dot++) svg += `<circle cx="${x+26+dot*6}" cy="${y-3}" r="2"/>`
+    if (interactive) svg += '</g>'
+  })
   if (note.duration > 1) {
-    const down = note.pitch >= 6
-    const stemX = x + (down ? -6 : 6)
-    const end = y + (down ? 35 : -35)
-    svg += `<path d="M${stemX} ${y}V${end}" stroke="#202124" stroke-width="1.5"/>`
-    const flags = Math.max(0, Math.log2(note.duration)-2)
-    for(let i=0;i<flags;i++) {
-      const start = end + (down ? -i*6 : i*6), d=down?-1:1
-      svg += `<path d="M${stemX} ${start}q17 ${d*7} 5 ${d*22}q7 ${-d*15} -5 ${-d*16}" fill="#202124"/>`
+    const highY=top+60-tones[tones.length-1].pitch*6,lowY=top+60-tones[0].pitch*6
+    const stemX=x+(down?-6:6), start=down?highY:lowY, end=down?lowY+35:highY-35
+    svg += `<path d="M${stemX} ${start}V${end}" stroke="#202124" stroke-width="1.5"/>`
+    for(let i=0;i<Math.max(0,Math.log2(note.duration)-2);i++) {
+      const flagY=end+(down?-i*6:i*6),direction=down?-1:1
+      svg += `<path d="M${stemX} ${flagY}q17 ${direction*7} 5 ${direction*22}q7 ${-direction*15} -5 ${-direction*16}" fill="#202124"/>`
     }
   }
-  if (note.accidental) svg += `<text x="${x-20}" y="${y+7}" font-size="22">${{'#':'♯',b:'♭',n:'♮'}[note.accidental]}</text>`
-  for(let i=0;i<note.dots;i++) svg += `<circle cx="${x+14+i*6}" cy="${y-3}" r="2"/>`
   return svg
 }
 function jianpuNote(note: ScoreNote, x: number, top: number, key: string) {
@@ -79,7 +101,7 @@ function bar(note: ScoreNote,x:number,y:number,staff:boolean) {
   return note.bar==='end'?line(-5)+line(2,4):note.bar==='double'?line(-3)+line(3):note.bar==='repeatStart'?line(-4,3)+line(2)+dots(9):note.bar==='repeatEnd'?dots(-9)+line(-2)+line(4,3):line(0)
 }
 export function renderScore(score: ScoreDocument, selected: string[] = [], caret = -1, interactive = false) {
-  const { positions,rows,height,top,rowHeight } = layoutScore(score)
+  const { positions,rows,height,top,rowHeight,start } = layoutScore(score)
   const staff = score.view==='staff'
   let body = `<rect width="1000" height="${height}" fill="white"/><g fill="#202124" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Segoe UI Symbol',serif"><text x="500" y="62" font-size="30" font-weight="600" text-anchor="middle">${escapeXml(score.title||'未命名乐谱')}</text><text x="64" y="108" font-size="16">${staff?'调号':'1 ='} ${escapeXml(score.key)}　${score.beats}/${score.beatUnit}　♩ = ${score.tempo}</text>`
   for(let row=0;row<rows;row++) {
@@ -96,13 +118,16 @@ export function renderScore(score: ScoreDocument, selected: string[] = [], caret
   }
   for (const pos of positions) {
     const {note,x,y,index}=pos
-    if(interactive) body+=`<g data-note-id="${escapeXml(note.id)}" data-index="${index}" role="button" tabindex="-1" aria-label="${note.kind==='note'?noteName(note.pitch):note.kind==='rest'?'休止符':note.kind==='bar'?'小节线':'换行'}"><rect x="${x-23}" y="${y-50}" width="48" height="145" rx="4" fill="${selected.includes(note.id)?'#e7eeff':'transparent'}" stroke="${selected.includes(note.id)?'#8ba7f7':'none'}"/>`
-    if(note.kind==='note') body+=staff?staffNote(note,x,y):jianpuNote(note,x,y,score.key)
+    const rise=staff?0:chordRise(note,score.key)
+    const hitTop=staff?Math.min(y-50,y+40-Math.max(...noteTones(note).map(t=>t.pitch))*6):y-50-rise
+    const hitBottom=staff?Math.max(y+95,y+80-Math.min(...noteTones(note).map(t=>t.pitch))*6):y+95
+    if(interactive) body+=`<g data-note-id="${escapeXml(note.id)}" data-index="${index}" role="button" tabindex="-1" aria-label="${note.kind==='note'?noteTones(note).length>1?'和弦 '+noteTones(note).map(t=>noteName(t.pitch)).join(' '):noteName(note.pitch):note.kind==='rest'?'休止符':note.kind==='bar'?'小节线':'换行'}"><rect x="${x-23}" y="${hitTop}" width="48" height="${hitBottom-hitTop}" rx="4" fill="${selected.includes(note.id)?'#e7eeff':'transparent'}" stroke="${selected.includes(note.id)?'#8ba7f7':'none'}"/>`
+    if(note.kind==='note') body+=staff?staffNote(note,x,y,interactive):jianpuStack(note,score.key).map(item => `${interactive?`<g data-tone-index="${item.index}">`:''}${jianpuNote({...note,...item.tone},x,y+item.offset,score.key)}${interactive?'</g>':''}`).join('')
     else if(note.kind==='rest') body+=staff?`<text x="${x}" y="${y+37}" text-anchor="middle" font-size="34">${({1:'𝄻',2:'𝄼',4:'𝄽',8:'𝄾',16:'𝄿',32:'𝅀',64:'𝅁'})[note.duration]}</text>${Array.from({length:note.dots},(_,i)=>`<circle cx="${x+16+i*6}" cy="${y+26}" r="2"/>`).join('')}`:jianpuNote(note,x,y,score.key)
     else if(note.kind==='bar') body+=bar(note,x,y,staff)
     else if(interactive) body+=`<text x="${x}" y="${y+30}" fill="#8a9bad">↵</text>`
     if(note.lyric) body+=`<text x="${x}" y="${y+95}" text-anchor="middle" font-size="17">${escapeXml(note.lyric)}</text>`
-    if(note.mark) body+=`<text x="${x}" y="${y-26}" text-anchor="middle" font-size="17" font-style="italic">${escapeXml(note.mark)}</text>`
+    if(note.mark) body+=`<text x="${x}" y="${decorationY(note,y,staff,score.key)}" text-anchor="middle" font-size="17" font-style="italic">${escapeXml(note.mark)}</text>`
     if(interactive) body+='</g>'
   }
   for(const field of ['slur','tuplet'] as const) {
@@ -112,14 +137,14 @@ export function renderScore(score: ScoreDocument, selected: string[] = [], caret
       for(const row of new Set(members.map(p=>p.row))) {
         const onRow=members.filter(p=>p.row===row),a=onRow[0],b=onRow[onRow.length-1]
         if(!a||!b) continue
-        const y=a.y-39
+        const y=Math.min(...onRow.map(p=>decorationY(p.note,p.y,staff,score.key)))-20
         body+=field==='slur'?`<path d="M${a.x-6} ${y+16}Q${(a.x+b.x)/2} ${y-12} ${b.x+6} ${y+16}" fill="none" stroke="#202124" stroke-width="1.3"/>`:`<path d="M${a.x-14} ${y+7}v-7H${b.x+14}v7" fill="none" stroke="#202124"/><rect x="${(a.x+b.x)/2-7}" y="${y-10}" width="14" height="16" fill="white"/><text x="${(a.x+b.x)/2}" y="${y+3}" font-size="14" text-anchor="middle">3</text>`
       }
     }
   }
   if(interactive) {
     const previous=positions[Math.min(caret-1,positions.length-1)]
-    const x=caret===0||!previous?(staff?184:112):previous.x+25,y=previous?.y||top
+    const x=caret===0||!previous?(start-18):previous.x+25,y=previous?.y||top
     body+=`<path class="score-caret" d="M${x} ${y-13}v72" stroke="#3b6df6" stroke-width="2"/>`
     if(!score.notes.length) body+=`<text x="500" y="300" text-anchor="middle" font-size="15" fill="#9299a5">点击谱面放置光标，使用 1–7 或上方面板录入音符</text>`
   }

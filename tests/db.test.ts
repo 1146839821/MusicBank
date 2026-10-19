@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
 import { MusicBankDatabase } from '../electron/db.js'
+import { emptyScore, newNote, withChordTone, parseScore } from '../src/notation/score'
 
 const roots: string[] = []
 
@@ -16,6 +17,8 @@ describe('MusicBankDatabase', () => {
     const root = mkdtempSync(join(tmpdir(), 'musicbank-test-'))
     roots.push(root)
     const database = new MusicBankDatabase(root)
+    const score = { ...emptyScore(), notes: [withChordTone(newNote(0), { pitch: 2, accidental: 'b' })] }
+    const notationSource = JSON.stringify(score)
     database.saveQuestion({
       id: 'MUS-TEST-001',
       title: '节奏记号“♩”代表的音符是？',
@@ -30,15 +33,17 @@ describe('MusicBankDatabase', () => {
       options: ['全音符', '二分音符', '四分音符', '八分音符'],
       correctAnswer: 'C',
       explanation: '♩是四分音符，通常占一拍。',
-      notationDocument: '{"version":1,"notes":[]}',
+      notationDocument: notationSource,
     })
 
     const [question] = database.listQuestions()
-    expect(question.notationDocument).toBe('{"version":1,"notes":[]}')
-    database.saveQuestion({ ...question, notationDocument: '{"version":1,"title":"修改源稿"}' })
+    expect(question.notationDocument).toBe(notationSource)
+    database.saveQuestion({ ...question, notationDocument: JSON.stringify({ ...score, title: '修改源稿' }) })
     database.close()
     const reopened = new MusicBankDatabase(root)
-    expect(reopened.listQuestions()[0].notationDocument).toContain('修改源稿')
+    const restored = parseScore(reopened.listQuestions()[0].notationDocument)
+    expect(restored.title).toBe('修改源稿')
+    expect(restored.notes[0].chord).toEqual([{ pitch: 2, accidental: 'b' }])
     reopened.close()
     expect(question.title).toContain('♩')
     expect(question.options).toEqual(['全音符', '二分音符', '四分音符', '八分音符'])
