@@ -33,6 +33,27 @@ describe('editable music scores', () => {
     expect(renderScore(score)).toContain('<ellipse')
     expect(score.notes).toHaveLength(60)
   })
+  it('starts each system with a bar and numbers its first musical measure in both views', () => {
+    for (const view of ['jianpu','staff'] as const) {
+      const score = {...emptyScore(), view, notes:Array.from({length:24},()=>newNote(0))}
+      const layout = layoutScore(score)
+      expect(layout.staves.map(stave=>stave.measureNumber)).toEqual([1,4])
+      const svg=renderScore(score)
+      expect(svg.match(/class="[^"]*system-bar[^"]*"/g)).toHaveLength(layout.rows)
+      expect(svg.match(/class="initial-measure-bar/g)).toHaveLength(layout.rows)
+      expect(svg).toMatch(/class="measure-number"[^>]*>4<\/text>/)
+      expect(svg).not.toMatch(/class="measure-number"[^>]*>2<\/text>/)
+    }
+  })
+  it('keeps measure numbering across manual breaks, partial measures and leading repeat bars', () => {
+    const score=emptyScore()
+    const bar={...newNote(0),kind:'bar' as const,bar:'repeatStart' as const}
+    const line={...newNote(0),kind:'break' as const}
+    score.notes=[bar,newNote(0),newNote(0),line,newNote(0),newNote(0),{...line,id:'break-2'},newNote(0)]
+    expect(layoutScore(score).staves.map(stave=>stave.measureNumber)).toEqual([1,1,2])
+    score.notes=[...Array.from({length:4},()=>newNote(0)),line]
+    expect(layoutScore(score).staves.map(stave=>stave.measureNumber)).toEqual([1,2])
+  })
   it('leaves room for ledger notes at both ends of the pitch range', () => {
     const score=emptyScore();score.view='staff';score.notes=[newNote(28),newNote(-14)]
     const layout=layoutScore(score)

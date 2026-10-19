@@ -26,9 +26,28 @@ export function staffHeaderLayout(score:ScoreDocument) {
   return {timeX,firstNote:timeX+42+(String(score.beats).length-1)*6}
 }
 export function layoutScore(source: ScoreDocument) {
-  const result=layoutEngraving(withAutomaticBars(source)),indices=new Map(source.notes.map((note,index)=>[note.id,index]))
+  const engraving = withAutomaticBars(source)
+  const result=layoutEngraving(engraving),indices=new Map(source.notes.map((note,index)=>[note.id,index]))
   const bars=result.positions.filter(position=>!indices.has(position.note.id))
-  return {...result,bars,positions:result.positions.filter(position=>indices.has(position.note.id)).map(position=>({...position,index:indices.get(position.note.id)!}))}
+  // Count musical measures per voice, independently of visual wrapping or explicit line breaks.
+  const measures = new Map<string, number>()
+  const voices = scoreVoices(engraving)
+  for (const voice of voices) {
+    let number = 1, hasNotes = false
+    for (const note of engraving.notes.filter(note => (note.voice || voices[0].id) === voice.id)) {
+      measures.set(note.id, number)
+      if (note.kind === 'note' || note.kind === 'rest') hasNotes = true
+      if (note.kind === 'bar' && hasNotes) { number++; hasNotes = false }
+    }
+  }
+  const staves = result.staves.map(stave => {
+    const first = result.positions.find(position => position.row === stave.row && position.voice === stave.voice && ['note','rest'].includes(position.note.kind))
+    const earlier = result.positions.filter(position => position.row < stave.row && position.voice === stave.voice && position.note.kind !== 'break')
+    const previous = earlier[earlier.length - 1]
+    const emptyNumber = previous ? measures.get(previous.note.id)! + (previous.note.kind === 'bar' ? 1 : 0) : 1
+    return {...stave, measureNumber: first ? measures.get(first.note.id)! : emptyNumber}
+  })
+  return {...result,staves,bars,positions:result.positions.filter(position=>indices.has(position.note.id)).map(position=>({...position,index:indices.get(position.note.id)!}))}
 }
 function layoutEngraving(score: ScoreDocument) {
   const positions: NotePosition[] = []
@@ -181,7 +200,8 @@ export function renderScore(score: ScoreDocument, selected: string[] = [], caret
       for(let i=0;i<Math.abs(count);i++) body+=`<text x="${106+i*11}" y="${y+(count>0?[0,18,-6,12][i]:[24,6,30][i])+7}" font-size="22">${count>0?'♯':'♭'}</text>`
       body+=`<text x="${staffHeaderLayout(score).timeX}" y="${y+19}" text-anchor="middle" font-family="Times New Roman,serif" font-style="normal" font-size="26" font-weight="700">${score.beats}</text><text x="${staffHeaderLayout(score).timeX}" y="${y+43}" text-anchor="middle" font-family="Times New Roman,serif" font-style="normal" font-size="26" font-weight="700">${score.beatUnit}</text>`
     }
-    body+=`<text x="48" y="${y-19}" font-size="11" fill="#8c929b">${row+1}</text>`
+    body+=`<path class="initial-measure-bar${staff?'':' system-bar'}" d="M${start-(staff?24:35)} ${staff?y:y-4}V${staff?y+48:y+46}" stroke="#202124" stroke-width="1.4"/>`
+    body+=`<text class="measure-number" x="48" y="${y-19}" font-size="11" fill="#8c929b">${stave.measureNumber}</text>`
   }
   if(staff)for(const row of new Set(staves.map(stave=>stave.row))){
     const system=staves.filter(stave=>stave.row===row),first=system[0].y,last=system[system.length-1].y+48
