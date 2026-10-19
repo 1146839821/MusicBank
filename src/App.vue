@@ -591,7 +591,10 @@ function collapseOptions() {
   if (!selectedAnswers.value.length) selectedAnswers.value = ['A']
 }
 
-function duplicateQuestion(question: Question) {
+const libraryMutationBusy = ref(false)
+
+async function duplicateQuestion(question: Question) {
+  if (libraryMutationBusy.value) return
   const copy: Question = {
     ...question,
     id: nextQuestionId.value,
@@ -601,24 +604,47 @@ function duplicateQuestion(question: Question) {
     options: question.options ? [...question.options] : undefined,
     fillAnswers: question.fillAnswers ? [...question.fillAnswers] : undefined,
   }
-  questions.value.unshift(copy)
-  if (window.musicBank) void window.musicBank.questions.save(copy)
-  notify(`已复制为 ${copy.id}，请继续完善后发布`)
+  libraryMutationBusy.value = true
+  try {
+    if (window.musicBank) await window.musicBank.questions.save(copy)
+    questions.value.unshift(copy)
+    notify(`已复制为 ${copy.id}，请继续完善后发布`)
+  } catch {
+    notify('复制失败，请重试')
+  } finally {
+    libraryMutationBusy.value = false
+  }
 }
 
 async function deleteQuestion(question: Question) {
-  if (!await confirmDestructive(question.id)) { notify('已取消删除'); return }
-  questions.value = questions.value.filter((item) => item.id !== question.id)
-  if (window.musicBank) void window.musicBank.questions.delete(question.id)
-  if (currentSavedId.value === question.id) resetForm()
-  notify(`已删除 ${question.id}`)
+  if (libraryMutationBusy.value) return
+  libraryMutationBusy.value = true
+  try {
+    if (!await confirmDestructive(question.id)) { notify('已取消删除'); return }
+    if (window.musicBank) await window.musicBank.questions.delete(question.id)
+    questions.value = questions.value.filter((item) => item.id !== question.id)
+    if (currentSavedId.value === question.id) resetForm()
+    notify(`已删除 ${question.id}`)
+  } catch {
+    notify('删除失败，题目已保留，请重试')
+  } finally {
+    libraryMutationBusy.value = false
+  }
 }
 
-function toggleQuestionStatus(question: Question) {
-  question.status = question.status === '已发布' ? '草稿' : '已发布'
-  question.updated = '刚刚'
-  if (window.musicBank) void window.musicBank.questions.save(question)
-  notify(question.status === '已发布' ? `已发布 ${question.id}` : `已撤回 ${question.id}`)
+async function toggleQuestionStatus(question: Question) {
+  if (libraryMutationBusy.value) return
+  libraryMutationBusy.value = true
+  const updated: Question = { ...question, status: question.status === '已发布' ? '草稿' : '已发布', updated: '刚刚' }
+  try {
+    if (window.musicBank) await window.musicBank.questions.save(updated)
+    Object.assign(question, updated)
+    notify(updated.status === '已发布' ? `已发布 ${question.id}` : `已撤回 ${question.id}`)
+  } catch {
+    notify('状态更新失败，请重试')
+  } finally {
+    libraryMutationBusy.value = false
+  }
 }
 
 function openAudioPicker() { audioInput.value?.click() }
