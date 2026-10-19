@@ -7,8 +7,9 @@ import { registerDocumentHandlers } from './document-handlers.js'
 import { assetResponse } from './asset-response.js'
 import { ensureDefaultTemplate } from './default-template.js'
 import { inspectTemplate } from './paper-documents.js'
+import {createBackup} from './create-backup.js'
 import { restoreBackup } from './restore-backup.js'
-import { isBackupAssetFilename, verifyBackupAssetBytes } from './backup-validation.js'
+import { isBackupAssetFilename } from './backup-validation.js'
 import { MusicBankDatabase, createAssetRecord } from './db.js'
 import type { AssetRecord, BackupPayload, ExamAnswerRecord, ExamAttemptRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile } from './types.js'
 
@@ -67,19 +68,13 @@ app.whenReady().then(async () => {
   ipcMain.handle('wrong:remove', (_event, questionId: string) => database.removeWrongQuestion(questionId))
   ipcMain.handle('assets:update-duration', (_event, id: string, durationMs: number) => database.updateAssetDuration(id, durationMs))
   ipcMain.handle('backup:export', async () => {
-    const result = await dialog.showSaveDialog({ title: '导出 MusicBank 备份', defaultPath: join(app.getPath('documents'), `MusicBank-备份-${new Date().toISOString().slice(0, 10)}.musicbank.json`), filters: [{ name: 'MusicBank 备份', extensions: ['musicbank.json'] }] })
+    const now=new Date()
+    const localDate=[now.getFullYear(),String(now.getMonth()+1).padStart(2,'0'),String(now.getDate()).padStart(2,'0')].join('-')
+    const result = await dialog.showSaveDialog({ title: '导出 MusicBank 备份', defaultPath: join(app.getPath('documents'), `MusicBank-备份-${localDate}.musicbank.json`), filters: [{ name: 'MusicBank 备份', extensions: ['musicbank.json'] }] })
     if (result.canceled || !result.filePath) return { canceled: true }
-    const assets = database.listAssets().map((record) => {
-      const folder = record.assetType === 'audio' ? database.audioPath : database.imagePath
-      const filePath = join(folder, record.storedName)
-      if (!existsSync(filePath)) throw new Error(`素材文件缺失，备份已取消：${record.originalName}`)
-      const bytes = readFileSync(filePath)
-      verifyBackupAssetBytes(record, bytes)
-      return { record, bytesBase64: bytes.toString('base64') }
-    })
-    const payload: BackupPayload = { questionSequence: database.questionSequence(), format: 'musicbank-backup', version: 1, exportedAt: new Date().toISOString(), questions: database.listQuestions(), papers: database.listPapers(), wrongQuestionIds: database.listWrongQuestionIds(), assets, templates: database.listTemplates(true).map(record => ({record,bytesBase64:database.templateBytes(record.id).toString('base64')})) }
+    const payload = createBackup(database)
     writeFileSync(result.filePath, JSON.stringify(payload), 'utf8')
-    return { canceled: false, filePath: result.filePath, questionCount: payload.questions.length, paperCount: payload.papers.length, assetCount: payload.assets.length }
+    return { canceled: false, filePath: result.filePath, questionCount: payload.questions.length, paperCount: payload.papers.length, assetCount: payload.assets.length, examCount:payload.exams?.length||0, practiceCount:payload.practiceRecords?.length||0 }
   })
   ipcMain.handle('backup:import', async (_event, password: string) => {
     if (!database.verifyPassword(String(password || ''))) throw new Error('账户密码不正确，已取消恢复')
@@ -97,7 +92,7 @@ app.whenReady().then(async () => {
       template.record.summary = await inspectTemplate(Buffer.from(template.bytesBase64, 'base64'))
     }
     restoreBackup(database, payload)
-    return { canceled: false, filePath: result.filePaths[0], questionCount: payload.questions.length, paperCount: payload.papers.length, assetCount: payload.assets.length }
+    return { canceled: false, filePath: result.filePaths[0], questionCount: payload.questions.length, paperCount: payload.papers.length, assetCount: payload.assets.length, examCount:payload.exams?.length||0, practiceCount:payload.practiceRecords?.length||0 }
   })
 
   ipcMain.handle('system:profile', () => database.getUserProfile())

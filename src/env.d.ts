@@ -47,8 +47,8 @@ declare global {
         updateDuration: (id: string, durationMs: number) => Promise<void>
       }
       backup: {
-        export: () => Promise<{ canceled: boolean; filePath?: string; questionCount?: number; paperCount?: number; assetCount?: number }>
-        import: (password: string) => Promise<{ canceled: boolean; filePath?: string; questionCount?: number; paperCount?: number; assetCount?: number }>
+        export: () => Promise<{ canceled: boolean; filePath?: string; questionCount?: number; paperCount?: number; assetCount?: number; examCount?:number; practiceCount?:number }>
+        import: (password: string) => Promise<{ canceled: boolean; filePath?: string; questionCount?: number; paperCount?: number; assetCount?: number; examCount?:number; practiceCount?:number }>
       }
       system: {
         isDesktop: boolean

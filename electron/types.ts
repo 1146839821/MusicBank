@@ -92,7 +92,12 @@ export interface PracticeRecord {
   result: 'correct' | 'wrong' | 'pending'
 }
 
+export interface PracticeHistoryRecord extends PracticeRecord { createdAt: string }
+export interface WrongQuestionRecord { questionId: string; wrongCount: number; mastered: boolean; lastWrongAt: string }
 export interface BackupPayload {
+  exams?: Array<Pick<ExamSessionRecord, 'attempt' | 'answers'>>
+  practiceRecords?: PracticeHistoryRecord[]
+  wrongRecords?: WrongQuestionRecord[]
   questionSequence?: number
   format: 'musicbank-backup'
   version: 1

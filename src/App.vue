@@ -899,7 +899,7 @@ async function exportBackup() {
   backupBusy.value = true
   try {
     const result = await window.musicBank.backup.export()
-    if (!result.canceled) notify(`备份已导出：${result.questionCount || 0} 道试题，${result.assetCount || 0} 个素材`)
+    if (!result.canceled) notify(`备份已导出：${result.questionCount || 0} 道试题，${result.assetCount || 0} 个素材，${result.examCount || 0} 份答卷`)
   } catch {
     notify('备份导出失败，请稍后重试')
   } finally {
@@ -912,7 +912,7 @@ async function importBackup() {
     notify('浏览器预览模式暂不支持恢复，请使用桌面版 MusicBank')
     return
   }
-  if (!window.confirm('恢复备份会替换当前本地题库、试卷、错题和素材，是否继续？')) return
+  if (!window.confirm('恢复备份会替换当前本地题库、试卷、考试记录、练习记录、错题和素材，是否继续？')) return
   const password = window.prompt('为防止误恢复，请输入账户密码：')
   if (password === null) return
   backupBusy.value = true
@@ -922,8 +922,11 @@ async function importBackup() {
     questions.value = await window.musicBank.questions.list()
     savedPapers.value = await window.musicBank.papers.list()
     wrongQuestionIds.value = await window.musicBank.wrong.list()
+    activeExamAttemptId.value=null
+    examSubmitted.value=false
+    Object.keys(examAnswers).forEach(key=>delete examAnswers[key])
     clearPaper()
-    notify(`备份已恢复：${result.questionCount || 0} 道试题，${result.assetCount || 0} 个素材`)
+    notify(`备份已恢复：${result.questionCount || 0} 道试题，${result.assetCount || 0} 个素材，${result.examCount || 0} 份答卷`)
   } catch {
     notify('备份恢复失败，文件可能已损坏或版本不兼容')
   } finally {
@@ -994,12 +997,12 @@ function handleShortcut(event: KeyboardEvent) {
         <section v-else-if="activeView === 'wrong'" class="view wrong-view"><div class="view-heading"><div><div class="eyebrow">学习与考试 / 错题复习</div><h1>我的错题</h1><p>复习做错的题目，保留图片和音频引用。</p></div><div class="paper-status"><span class="status-dot"></span>{{ wrongQuestions.length }} 道待复习</div></div><div v-if="wrongQuestions.length" class="wrong-list"><div v-for="question in wrongQuestions" :key="question.id" class="wrong-item"><div class="question-type" :class="question.type === '选择题' ? 'purple' : question.type === '填空题' ? 'blue' : 'orange'">{{ question.type.slice(0, 1) }}</div><div class="wrong-copy"><strong>{{ question.title }}</strong><span>{{ question.id }} · {{ question.grade }} · {{ question.category }}<i v-if="question.hasAudio"><svg-icon name="music" />音频</i><i v-if="question.hasImage"><svg-icon name="image" />图片</i></span></div><button class="secondary-button" @click="reviewWrong(question)">重新练习</button><button class="icon-button" title="移出错题本" @click="removeWrong(question)"><svg-icon name="close" /></button></div></div><div v-else class="empty-practice wrong-empty"><h2>暂时没有错题</h2><p>练习中答错的题目会自动出现在这里。</p><button class="primary-button" @click="go('practice', '顺序练习')">开始练习 <svg-icon name="arrow" /></button></div></section>
 
         <section v-else-if="activeView === 'backup'" class="view backup-view">
-          <div class="view-heading"><div><div class="eyebrow">系统 / 数据安全</div><h1>数据备份</h1><p>将题库、试卷、错题和应用内图片/音频素材保存为一个可恢复文件。</p></div><span class="paper-status"><span class="status-dot"></span>数据保存在本机</span></div>
+          <div class="view-heading"><div><div class="eyebrow">系统 / 数据安全</div><h1>数据备份</h1><p>将题库、试卷、考试答卷、练习记录和图片/音频保存为一个可恢复文件。</p></div><span class="paper-status"><span class="status-dot"></span>数据保存在本机</span></div>
           <div class="backup-grid">
             <div class="backup-card backup-card-primary"><div class="backup-card-icon"><svg-icon name="archive" /></div><div class="backup-card-copy"><h2>导出备份</h2><p>导出当前 MusicBank 数据。图片和音频会从应用数据文件夹一起打包，不依赖原始文件位置。</p></div><button class="primary-button" :disabled="backupBusy" @click="exportBackup"><svg-icon name="archive" />{{ backupBusy ? '处理中…' : '导出备份' }}</button></div>
             <div class="backup-card"><div class="backup-card-icon blue"><svg-icon name="arrow" /></div><div class="backup-card-copy"><h2>恢复备份</h2><p>从 `.musicbank.json` 文件恢复题库。恢复会替换当前本地数据，并要求输入账户密码确认。</p></div><button class="secondary-button" :disabled="backupBusy" @click="importBackup"><svg-icon name="arrow" />{{ backupBusy ? '处理中…' : '选择备份文件' }}</button></div>
           </div>
-          <div class="panel backup-info-panel"><div class="panel-heading"><div><h2>备份内容</h2><p>文件内包含可继续编辑和练习所需的数据。</p></div><svg-icon name="info" /></div><div class="backup-content-list"><div><span class="backup-check">✓</span><span>试题、答案、解析和音乐记谱符号</span></div><div><span class="backup-check">✓</span><span>已保存试卷与试卷快照</span></div><div><span class="backup-check">✓</span><span>练习错题关联</span></div><div><span class="backup-check">✓</span><span>应用数据文件夹中的图片与 MP3/WAV 音频</span></div></div></div>
+          <div class="panel backup-info-panel"><div class="panel-heading"><div><h2>备份内容</h2><p>文件内包含可继续编辑和练习所需的数据。</p></div><svg-icon name="info" /></div><div class="backup-content-list"><div><span class="backup-check">✓</span><span>试题、答案、解析和音乐记谱符号</span></div><div><span class="backup-check">✓</span><span>已保存试卷、试卷快照与 Word 模板</span></div><div><span class="backup-check">✓</span><span>考试进度、学生答案、成绩和人工批阅评语</span></div><div><span class="backup-check">✓</span><span>练习记录、错题次数及最近出错时间</span></div><div><span class="backup-check">✓</span><span>应用数据文件夹中的图片与 MP3/WAV 音频</span></div></div></div>
         </section>
         <section v-else-if="activeView === 'settings'" class="view settings-view">
           <div class="view-heading"><div><div class="eyebrow">系统 / 偏好设置</div><h1>系统设置</h1><p>调整 MusicBank 的显示偏好、本地数据和账户安全。</p></div></div>

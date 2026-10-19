@@ -1,10 +1,11 @@
 import Database from 'better-sqlite3'
+import {validateLearningBackup} from './learning-backup.js'
 import { questionAttachments } from './question-assets.js'
 import { musicCategories } from './music-categories.js'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
-import type { BackupPayload, AssetRecord, ExamAnswerRecord, ExamAttemptRecord, ExamSessionRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile, PaperTemplateRecord } from './types.js'
+import type { BackupPayload, AssetRecord, ExamAnswerRecord, ExamAttemptRecord, ExamSessionRecord, PracticeHistoryRecord, WrongQuestionRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile, PaperTemplateRecord } from './types.js'
 
 type QuestionRow = Omit<QuestionRecord, 'updated' | 'hasAudio' | 'hasImage' | 'options' | 'correctAnswer' | 'fillAnswers' | 'referenceAnswer' | 'audioName' | 'audioDuration' | 'audioAssetId' | 'imageAssetId'> & {
   updated_at: string
@@ -335,6 +336,7 @@ export class MusicBankDatabase {
   }
 
   restoreBackupRecords(payload: BackupPayload) {
+    validateLearningBackup(payload)
     this.db.transaction(() => {
       this.clearAllData()
       for (const item of payload.templates || []) this.saveTemplate(item.record, Buffer.from(item.bytesBase64, 'base64'))
@@ -342,7 +344,18 @@ export class MusicBankDatabase {
       if(Number.isSafeInteger(payload.questionSequence)&&payload.questionSequence!>this.questionSequence())this.setSetting('questions.sequence',payload.questionSequence)
       for (const question of payload.questions) this.saveQuestion(question)
       for (const paper of payload.papers) this.savePaper(paper)
-      for (const id of payload.wrongQuestionIds) this.upsertWrongQuestion(id)
+      for (const session of payload.exams || []) {
+        this.saveExamAttempt({...session.attempt,status:'进行中',submittedAt:undefined})
+        for (const answer of session.answers) this.saveExamAnswer(answer)
+        if (session.attempt.status==='已交卷') this.saveExamAttempt(session.attempt)
+      }
+      for (const record of payload.practiceRecords || []) {
+        this.db.prepare('INSERT INTO practice_records(question_id,answer_json,result,created_at) VALUES (?,?,?,?)').run(record.questionId,JSON.stringify(record.answer),record.result,record.createdAt)
+      }
+      if (payload.wrongRecords) {
+        const insert=this.db.prepare('INSERT INTO wrong_questions(question_id,wrong_count,mastered,last_wrong_at) VALUES (?,?,?,?)')
+        for (const record of payload.wrongRecords) insert.run(record.questionId,record.wrongCount,record.mastered?1:0,record.lastWrongAt)
+      } else for (const id of payload.wrongQuestionIds) this.upsertWrongQuestion(id)
     })()
   }
 
@@ -364,7 +377,7 @@ export class MusicBankDatabase {
       const paper = papers.find(item=>item.id===attempt.paperId)
       if (!paper) return []
       const rows = this.db.prepare('SELECT attempt_id AS attemptId,position,answer_json AS answerJson,score,review_status AS reviewStatus,comment FROM exam_answers WHERE attempt_id=? ORDER BY position').all(attempt.id) as Array<ExamAnswerRecord & {answerJson:string|null}>
-      return [{attempt, paper, answers:rows.map(({answerJson,...row})=>({...row,answer:answerJson===null?undefined:JSON.parse(answerJson)}))}]
+      return [{attempt:{...attempt,submittedAt:attempt.submittedAt??undefined}, paper, answers:rows.map(({answerJson,...row})=>({...row,score:row.score??undefined,reviewStatus:row.reviewStatus??undefined,comment:row.comment??undefined,answer:answerJson===null?undefined:JSON.parse(answerJson)}))}]
     })
   }
 
@@ -407,6 +420,16 @@ export class MusicBankDatabase {
       ON CONFLICT(attempt_id,position) DO UPDATE SET answer_json=excluded.answer_json,score=excluded.score,review_status=excluded.review_status,comment=excluded.comment`)
       .run(answer.attemptId, answer.position, answer.answer == null ? null : JSON.stringify(answer.answer), answer.score ?? null, answer.reviewStatus || null, answer.comment || null)
     return answer
+  }
+
+  listPracticeRecords(): PracticeHistoryRecord[] {
+    const rows=this.db.prepare('SELECT question_id AS questionId,answer_json AS answerJson,result,created_at AS createdAt FROM practice_records ORDER BY id').all() as Array<Omit<PracticeHistoryRecord,'answer'> & {answerJson:string|null}>
+    return rows.map(({answerJson,...row})=>({...row,answer:answerJson===null?'':JSON.parse(answerJson)}))
+  }
+
+  listWrongQuestionRecords(): WrongQuestionRecord[] {
+    const rows=this.db.prepare('SELECT question_id AS questionId,wrong_count AS wrongCount,mastered,last_wrong_at AS lastWrongAt FROM wrong_questions ORDER BY question_id').all() as Array<Omit<WrongQuestionRecord,'mastered'> & {mastered:number}>
+    return rows.map(row=>({...row,mastered:Boolean(row.mastered)}))
   }
 
   savePracticeRecord(record: PracticeRecord) {

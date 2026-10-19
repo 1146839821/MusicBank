@@ -1,11 +1,13 @@
 import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import {validateLearningBackup} from './learning-backup.js'
 import { isBackupAssetFilename, verifyBackupAssetBytes } from './backup-validation.js'
 import type { MusicBankDatabase } from './db.js'
 import type { BackupPayload } from './types.js'
 
 /** Stage files first; keep original assets until the database transaction commits. */
 export function restoreBackup(database: MusicBankDatabase, payload: BackupPayload) {
+  validateLearningBackup(payload)
   const stage = mkdtempSync(join(database.root, '.restore-'))
   const swaps: Array<{ target: string; original: string; installed: boolean }> = []
   let committed = false
