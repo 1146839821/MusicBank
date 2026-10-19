@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
-import { durations, emptyScore, keyTonic, newNote, noteName, scorePlayback, toggleTies, normalizeTies, disconnectTies, duplicateNotes, scoreVoices, voiceNotes, replaceVoiceNotes, addScoreVoice, removeScoreVoice, noteTones, withChordTone, updateTone, removeTone, parseScore, transposeNotes, type Duration, type ScoreDocument, type ScoreNote } from '../notation/score'
+import { scoreMeasures, TICKS_PER_BEAT, durations, emptyScore, keyTonic, newNote, noteName, scorePlayback, toggleTies, normalizeTies, disconnectTies, duplicateNotes, scoreVoices, voiceNotes, replaceVoiceNotes, addScoreVoice, removeScoreVoice, noteTones, withChordTone, updateTone, removeTone, parseScore, transposeNotes, type Duration, type ScoreDocument, type ScoreNote } from '../notation/score'
 import { layoutScore, renderScore } from '../notation/render'
 
 const props = defineProps<{ source: string; busy?: boolean }>()
@@ -26,6 +26,9 @@ const toneSelection = ref({id:'',index:0})
 const toneIndex = computed(() => current.value?.id === toneSelection.value.id ? Math.min(toneSelection.value.index,current.value.chord?.length||0) : 0)
 const currentTones = computed(() => current.value?.kind === 'note' ? noteTones(current.value) : [])
 const svg = computed(() => renderScore(score.value, selected.value, caret.value, true, activeVoice.value))
+const measureChecks=computed(()=>scoreMeasures(score.value))
+const measureIssues=computed(()=>measureChecks.value.filter(measure=>measure.status!=='complete'))
+const measureSummary=computed(()=>measureIssues.value.length?measureIssues.value.map(measure=>`${voices.value.find(voice=>voice.id===measure.voice)?.name} 第 ${measure.number} 小节${measure.status==='short'?'缺':'超出'} ${Number((Math.abs(measure.expected-measure.ticks)/TICKS_PER_BEAT*score.value.beatUnit/4).toFixed(3))} 拍`).join('；'):`${measureChecks.value.length} 个小节时值正确`)
 const noteCount = computed(() => score.value.notes.filter(note => note.kind==='note'||note.kind==='rest').length)
 let sound: AudioContext | undefined
 const playing = ref(false)
@@ -337,6 +340,7 @@ onUnmounted(stop)
         <label>试听<select v-model="auditionMode" aria-label="试听声部范围" @change="stop"><option value="all">全部声部合奏</option><option value="current">仅当前声部</option></select></label>
       </div>
       <div class="score-metadata"><input aria-label="乐谱标题" :value="score.title" placeholder="未命名乐谱（点击填写标题）" @change="setMeta('title',$event)"/><label>调号<select :value="score.key" @change="setMeta('key',$event)"><option v-for="key in ['C','G','D','A','E','F','Bb','Eb']" :key="key">{{ key }}</option></select></label><label>拍号<input aria-label="每小节拍数" type="number" min="1" max="12" :value="score.beats" @change="setMeta('beats',$event)"/>/<select aria-label="拍号分母" :value="score.beatUnit" @change="setMeta('beatUnit',$event)"><option v-for="value in [2,4,8,16]" :key="value">{{ value }}</option></select></label><label>♩ = <input aria-label="速度" type="number" min="30" max="240" :value="score.tempo" @change="setMeta('tempo',$event)"/></label></div>
+      <div v-if="noteCount" class="score-measure-status" :class="{warning:measureIssues.length}" role="status">自动小节线 · {{ measureSummary }}<span v-if="measureIssues.length">（弱起或片段可保留不完整小节；跨小节音符请拆分并添加延音线）</span></div>
       <div class="score-workspace"><div ref="canvas" class="score-paper" tabindex="0" role="application" aria-label="可编辑乐谱，数字键录入，方向键调整音高，Shift 点击连选，Delete 删除" :style="{width:`${zoom}%`}" @pointerdown="pointerdown" @pointermove="pointermove" @pointerup="pointerup" @pointercancel="pointerup" @dblclick="doubleclick" v-html="svg"></div></div>
       <div v-if="currentTones.length>1 && selected.length===1" class="score-chord-inspector" aria-label="和弦音编辑">
         <span>和弦音</span><button v-for="(tone,index) in currentTones" :key="index" type="button" :class="{active:toneIndex===index}" :aria-pressed="toneIndex===index" :aria-label="`选择和弦音 ${noteName(tone.pitch)}`" @click="toneSelection={id:current!.id,index}">{{ noteName(tone.pitch) }}{{ {'#':'♯',b:'♭',n:'♮','':''}[tone.accidental] }}</button>
@@ -350,6 +354,8 @@ onUnmounted(stop)
 </template>
 
 <style scoped>
+.score-measure-status{padding:7px 18px;background:#f3f8f5;color:#397254;font-size:11px;line-height:1.6;max-height:70px;overflow:auto}.score-measure-status.warning{background:#fff8eb;color:#95661e}.score-measure-status span{margin-left:8px}
+
 .score-voices{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:5px 18px;background:#fff;border-bottom:1px solid #e5e9f0}.score-voices>span{font-size:10px;color:#7f899a}.score-voices>input{width:104px}.score-voices label{display:flex;align-items:center;gap:6px;margin-left:auto;color:#7f899a}.score-voices .score-segment{max-width:440px;overflow:auto}.score-voices .score-segment button{max-width:130px;overflow:hidden;text-overflow:ellipsis}
 .score-chord-inspector{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:7px 18px;border-top:1px solid #dfe5f1;background:#f8faff}.score-chord-inspector>span{margin-right:8px;color:#6b7890}.score-chord-inspector small{margin-left:8px;color:#8791a3}.score-chord-inspector button{background:#edf0f7}
 .score-backdrop{position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(23,29,40,.32);backdrop-filter:blur(10px)}

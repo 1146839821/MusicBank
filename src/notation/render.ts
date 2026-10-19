@@ -1,4 +1,4 @@
-import { keyTonic, noteName, noteTones, tieLinks, scoreVoices, scoreTimeline, TICKS_PER_BEAT, type ScoreDocument, type ScoreNote } from './score'
+import { withAutomaticBars, keyTonic, noteName, noteTones, tieLinks, scoreVoices, scoreTimeline, TICKS_PER_BEAT, type ScoreDocument, type ScoreNote } from './score'
 export interface NotePosition { note: ScoreNote; index: number; x: number; y: number; row: number; voice: number }
 export const SCORE_WIDTH = 1000
 export const ROW_HEIGHT = 180
@@ -20,9 +20,19 @@ function chordRise(note: ScoreNote, key: string) { return Math.max(0,...jianpuSt
 function decorationY(note: ScoreNote, y: number, staff: boolean, key: string) {
   return staff ? Math.min(y-26,y+15-Math.max(...noteTones(note).map(tone => tone.pitch))*6) : y-26-chordRise(note,key)
 }
-export function layoutScore(score: ScoreDocument) {
+export function staffHeaderLayout(score:ScoreDocument) {
+  const count=Math.abs(({C:0,G:1,D:2,A:3,E:4,F:-1,Bb:-2,Eb:-3} as Record<string,number>)[score.key]||0)
+  const timeX=count?110+(count-1)*11+24:126
+  return {timeX,firstNote:timeX+42+(String(score.beats).length-1)*6}
+}
+export function layoutScore(source: ScoreDocument) {
+  const result=layoutEngraving(withAutomaticBars(source)),indices=new Map(source.notes.map((note,index)=>[note.id,index]))
+  const bars=result.positions.filter(position=>!indices.has(position.note.id))
+  return {...result,bars,positions:result.positions.filter(position=>indices.has(position.note.id)).map(position=>({...position,index:indices.get(position.note.id)!}))}
+}
+function layoutEngraving(score: ScoreDocument) {
   const positions: NotePosition[] = []
-  const start = score.view === 'staff' ? 234 : 130
+  const start = score.view === 'staff' ? staffHeaderLayout(score).firstNote : 130
   const pitches = score.notes.filter(n => n.kind === 'note').flatMap(n => noteTones(n).map(tone => tone.pitch))
   const high = Math.max(0,...pitches), low = Math.min(0,...pitches)
   const rise = Math.max(0,...score.notes.filter(n => n.kind === 'note').map(n => chordRise(n,score.key)))
@@ -44,7 +54,7 @@ export function layoutScore(score: ScoreDocument) {
       }
     }
     const wrapMeasure = measureStart && x > start && measureWidth <= 930-start && x + measureWidth > 944
-    if (x > 908 || wrapMeasure || note.kind === 'break') {
+    if ((x > 908 && note.kind !== 'bar') || wrapMeasure || note.kind === 'break') {
       row += 1
       x = start
       if (note.kind === 'break') { positions.push({ note, index, x: 938, y: top + (row - 1) * rowHeight, row: row - 1, voice: voices[0].id }); return }
@@ -155,7 +165,7 @@ function renderTies(score:ScoreDocument,positions:NotePosition[],staves:{row:num
   return svg
 }
 export function renderScore(score: ScoreDocument, selected: string[] = [], caret = -1, interactive = false, activeVoice = scoreVoices(score)[0].id) {
-  const { positions,staves,height,top,start } = layoutScore(score)
+  const { positions,bars,staves,height,top,start } = layoutScore(score)
   const staff = score.view==='staff'
   let body = `<rect width="1000" height="${height}" fill="white"/><g fill="#202124" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Segoe UI Symbol',serif"><text x="500" y="62" font-size="30" font-weight="600" text-anchor="middle">${escapeXml(score.title||'未命名乐谱')}</text><text x="64" y="108" font-size="16">${staff?'调号':'1 ='} ${escapeXml(score.key)}　${score.beats}/${score.beatUnit}　♩ = ${score.tempo}</text>`
   for(const stave of staves) {
@@ -169,10 +179,16 @@ export function renderScore(score: ScoreDocument, selected: string[] = [], caret
       const signature: Record<string, number> = {C:0,G:1,D:2,A:3,E:4,F:-1,Bb:-2,Eb:-3}
       const count = signature[score.key] || 0
       for(let i=0;i<Math.abs(count);i++) body+=`<text x="${106+i*11}" y="${y+(count>0?[0,18,-6,12][i]:[24,6,30][i])+7}" font-size="22">${count>0?'♯':'♭'}</text>`
-      body+=`<text x="170" y="${y+19}" text-anchor="middle" font-size="22" font-weight="600">${score.beats}</text><text x="170" y="${y+43}" text-anchor="middle" font-size="22" font-weight="600">${score.beatUnit}</text>`
+      body+=`<text x="${staffHeaderLayout(score).timeX}" y="${y+19}" text-anchor="middle" font-family="Times New Roman,serif" font-style="normal" font-size="26" font-weight="700">${score.beats}</text><text x="${staffHeaderLayout(score).timeX}" y="${y+43}" text-anchor="middle" font-family="Times New Roman,serif" font-style="normal" font-size="26" font-weight="700">${score.beatUnit}</text>`
     }
     body+=`<text x="48" y="${y-19}" font-size="11" fill="#8c929b">${row+1}</text>`
   }
+  if(staff)for(const row of new Set(staves.map(stave=>stave.row))){
+    const system=staves.filter(stave=>stave.row===row),first=system[0].y,last=system[system.length-1].y+48
+    body+=`<path class="system-bar" d="M64 ${first}V${last}" stroke="#202124" stroke-width="1.2"/>`
+    if(system.length>1){const middle=(first+last)/2;body+=`<path d="M54 ${first}C36 ${first+20} 54 ${middle-16} 42 ${middle}C54 ${middle+16} 36 ${last-20} 54 ${last}" fill="none" stroke="#202124" stroke-width="2"/>`}
+  }
+  for(const position of bars) body+=`<g class="automatic-bar">${bar(position.note,position.x,position.y,staff)}</g>`
   for (const pos of positions) {
     const {note,x,y,index}=pos
     const rise=staff?0:chordRise(note,score.key)

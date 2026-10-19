@@ -157,7 +157,7 @@ export function scoreTimeline(score: ScoreDocument) {
 export function resolvedScore(score: ScoreDocument) {
   const registers=new Map<number,Map<number,ScorePitch['accidental']>>()
   const previous=new Map<number,{id:string;tones:(ScorePitch & {midi:number})[]}>()
-  return scoreTimeline(score).map(item=>{
+  return scoreTimeline(withAutomaticBars(score)).map(item=>{
     const register=registers.get(item.voice)||new Map<number,ScorePitch['accidental']>()
     registers.set(item.voice,register)
     if(item.note.kind==='bar') register.clear()
@@ -260,4 +260,34 @@ export function scorePlayback(score: ScoreDocument, onlyVoice?: number) {
   }
   const events=[...groups.values()].sort((a,b)=>a.start-b.start)
   return {events,beats:ticks/TICKS_PER_BEAT}
+}
+
+export interface MeasureCheck { voice:number; number:number; ticks:number; expected:number; status:'complete'|'short'|'over'; lastId:string }
+/** Derive bar boundaries without changing the editable source or splitting sustained notes. */
+export function scoreMeasures(score:ScoreDocument):MeasureCheck[] {
+  const expected=score.beats*4/score.beatUnit*TICKS_PER_BEAT, result:MeasureCheck[]=[]
+  for(const voice of scoreVoices(score)) {
+    let ticks=0,number=1,lastId=''
+    const close=()=>{if(!ticks)return;result.push({voice:voice.id,number:number++,ticks,expected,status:ticks===expected?'complete':ticks<expected?'short':'over',lastId});ticks=0}
+    for(const note of voiceNotes(score,voice.id)) {
+      if(note.kind==='bar'){close();continue}
+      if(note.kind==='break')continue
+      ticks+=Math.round(noteBeats(note)*TICKS_PER_BEAT);lastId=note.id
+      if(ticks>=expected)close()
+    }
+    close()
+  }
+  return result
+}
+export function withAutomaticBars(score:ScoreDocument):ScoreDocument {
+  const boundaries=new Map(scoreMeasures(score).map(measure=>[measure.lastId,measure]))
+  const nextInVoice=new Map<string,ScoreNote|undefined>()
+  for(const voice of scoreVoices(score)) {
+    const notes=voiceNotes(score,voice.id).filter(note=>note.kind!=='break')
+    notes.forEach((note,index)=>nextInVoice.set(note.id,notes[index+1]))
+  }
+  return {...score,notes:score.notes.flatMap(note=>{
+    if(!boundaries.has(note.id)||nextInVoice.get(note.id)?.kind==='bar')return [note]
+    return [note,{...note,id:`auto-bar:${note.id}`,kind:'bar' as const,bar:'single' as const,chord:undefined,tieTo:undefined,lyric:'',mark:'',slur:undefined,tuplet:undefined}]
+  })}
 }
