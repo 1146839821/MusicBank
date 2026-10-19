@@ -1,30 +1,37 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="bg" x1="120" y1="80" x2="900" y2="960" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#263B7A"/>
-      <stop offset="1" stop-color="#111D43"/>
+    <linearGradient id="bg" x1="70" y1="40" x2="940" y2="980" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#27B9F4"/>
+      <stop offset=".48" stop-color="#176BEA"/>
+      <stop offset="1" stop-color="#4B14BD"/>
     </linearGradient>
-    <linearGradient id="note" x1="390" y1="214" x2="680" y2="794" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#FFD27A"/>
-      <stop offset="1" stop-color="#F07B66"/>
-    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(220 160) rotate(48) scale(760 900)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8BE7FF" stop-opacity=".5"/>
+      <stop offset="1" stop-color="#8BE7FF" stop-opacity="0"/>
+    </radialGradient>
     <filter id="shadow" x="-30%" y="-30%" width="160%" height="180%">
-      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#070D24" flood-opacity=".34"/>
+      <feDropShadow dx="0" dy="18" stdDeviation="16" flood-color="#08166D" flood-opacity=".38"/>
     </filter>
-    <clipPath id="tile"><rect x="32" y="32" width="960" height="960" rx="220"/></clipPath>
+    <filter id="soft-shadow" x="-30%" y="-30%" width="160%" height="180%">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#07176B" flood-opacity=".28"/>
+    </filter>
+    <clipPath id="tile"><rect x="26" y="26" width="972" height="972" rx="218"/></clipPath>
   </defs>
   <g clip-path="url(#tile)">
     <rect width="1024" height="1024" fill="url(#bg)"/>
-    <path d="M-40 180C178 72 386 66 584 132c172 57 324 55 512-24v-150H-40v222Z" fill="#8CA6FF" opacity=".14"/>
-    <path d="M-40 866c198-98 378-114 558-61 188 55 330 41 506-60v310H-40V866Z" fill="#080F2B" opacity=".38"/>
-    <g stroke="#DDE5FF" stroke-width="16" stroke-linecap="round" opacity=".68">
-      <path d="M154 362h716"/><path d="M154 430h716"/><path d="M154 498h716"/><path d="M154 566h716"/><path d="M154 634h716"/>
-    </g>
+    <rect width="1024" height="1024" fill="url(#glow)"/>
+    <path d="M-60 850C186 740 366 770 544 846c180 77 322 78 570-38v260H-60V850Z" fill="#2A0E94" opacity=".18"/>
   </g>
-  <g filter="url(#shadow)" fill="url(#note)">
-    <ellipse cx="420" cy="731" rx="144" ry="92"/>
-    <path d="M530 270c0-30 24-54 54-54h58v465c0 30-9 57-27 81-36 48-99 76-170 76-10 0-20 0-29-1 69-19 114-70 114-131V270Z"/>
-    <path d="M642 216c98 12 170 64 209 151-54-33-123-35-209-7V216Z"/>
+  <g filter="url(#soft-shadow)" fill="#FFF" stroke="#FFF" stroke-linejoin="round">
+    <path d="M182 582c96-55 193-60 298 7v190c-110-76-207-84-298-39V582Z" stroke-width="10"/>
+    <path d="M842 582c-96-55-193-60-362 7v190c116-76 239-84 362-39V582Z" stroke-width="10"/>
+    <path d="M480 588v191" fill="none" stroke-width="14" stroke-linecap="round"/>
+    <path d="M182 740c112-42 201-33 298 39 105-72 214-81 362-39" fill="none" stroke-width="12" stroke-linecap="round"/>
   </g>
-  <circle cx="818" cy="784" r="17" fill="#FFE3CB" opacity=".86"/>
+  <g filter="url(#shadow)" fill="#FFF" stroke="#FFF" stroke-linecap="round" stroke-linejoin="round">
+    <ellipse cx="371" cy="430" rx="77" ry="58" stroke-width="8"/>
+    <path d="M430 431V208c0-25 21-42 45-36 43 11 77 47 129 58 35 8 64 9 92 11v75c-45-5-84-13-119-26-45-16-82-39-112-65v206Z" stroke-width="8"/>
+    <path d="m555 425 67 73 142-172" fill="none" stroke-width="39"/>
+  </g>
+  <circle cx="820" cy="815" r="15" fill="#FFF" opacity=".78"/>
 </svg>
