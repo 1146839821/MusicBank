@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 
+import { summarizePractice, type PracticeResponse } from './practice'
+
 type View = 'dashboard' | 'library' | 'add' | 'papers' | 'practice' | 'exam' | 'wrong' | 'backup' | 'settings'
 type QuestionType = '选择题' | '填空题' | '简答题'
 type ChoiceMode = 'single' | 'multiple'
@@ -816,12 +818,10 @@ async function publishQuestion() {
   activeNavLabel.value = '试题管理'
 }
 
-const practiceResponses = reactive<Record<string, { answer: string; result: 'correct' | 'wrong' | 'pending' }>>({})
-const practiceCompletedCount = computed(() => practiceQuestions.value.filter((question) => practiceResponses[question.id]).length)
-const practiceAccuracy = computed(() => {
-  const graded = practiceQuestions.value.map((question) => practiceResponses[question.id]).filter((response) => response && response.result !== 'pending')
-  return graded.length ? `${Math.round(graded.filter((response) => response.result === 'correct').length / graded.length * 100)}%` : '待评分'
-})
+const practiceResponses = reactive<Record<string, PracticeResponse>>({})
+const practiceSummary = computed(() => summarizePractice(practiceQuestions.value, practiceResponses))
+const practiceCompletedCount = computed(() => practiceSummary.value.completed)
+const practiceAccuracy = computed(() => practiceSummary.value.accuracy === null ? '待评分' : `${practiceSummary.value.accuracy}%`)
 
 function resetPractice() {
   const response = practiceCurrent.value ? practiceResponses[practiceCurrent.value.id] : undefined
