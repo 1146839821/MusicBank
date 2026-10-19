@@ -30,6 +30,7 @@ export interface QuestionRecord {
   audioDuration?: string
   audioAssetId?: string
   imageAssetId?: string
+  notationDocument?: string
 }
 
 export interface AssetRecord {

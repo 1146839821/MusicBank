@@ -30,14 +30,20 @@ describe('MusicBankDatabase', () => {
       options: ['全音符', '二分音符', '四分音符', '八分音符'],
       correctAnswer: 'C',
       explanation: '♩是四分音符，通常占一拍。',
+      notationDocument: '{"version":1,"notes":[]}',
     })
 
     const [question] = database.listQuestions()
+    expect(question.notationDocument).toBe('{"version":1,"notes":[]}')
+    database.saveQuestion({ ...question, notationDocument: '{"version":1,"title":"修改源稿"}' })
+    database.close()
+    const reopened = new MusicBankDatabase(root)
+    expect(reopened.listQuestions()[0].notationDocument).toContain('修改源稿')
+    reopened.close()
     expect(question.title).toContain('♩')
     expect(question.options).toEqual(['全音符', '二分音符', '四分音符', '八分音符'])
     expect(question.correctAnswer).toBe('C')
     expect(question.explanation).toContain('四分音符')
-    database.close()
   })
 
   it('keeps an asset reference when a question is saved', () => {

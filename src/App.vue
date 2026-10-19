@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 
+import NotationEditor from './components/NotationEditor.vue'
 import { musicCategories } from '../electron/music-categories'
 import { summarizePractice, type PracticeResponse } from './practice'
 
@@ -31,6 +32,7 @@ interface Question {
   audioDuration?: string
   audioAssetId?: string
   imageAssetId?: string
+  notationDocument?: string
 }
 interface PaperItem { question: Question; score: number }
 interface SavedPaper { id: string; name: string; grade: string; totalScore: number; durationMinutes: number; seed?: string; items: Array<{ position: number; questionId: string; score: number; snapshot: Question }> }
@@ -108,132 +110,12 @@ const examStartedAt = ref<string | null>(null)
 const examAudioElement = ref<HTMLAudioElement | null>(null)
 const wrongQuestionIds = ref<string[]>([])
 const paperError = ref('')
-type NotationMode = 'jianpu' | 'staff'
-interface NotationToken { id: number; label: string; glyph: string; category: string }
-interface NotationGroup { label: string; items: Array<{ label: string; glyph: string; category?: string }> }
-
 const showNotationPanel = ref(false)
-const notationMode = ref<NotationMode>('jianpu')
-const notationTokens = ref<NotationToken[]>([])
-let notationTokenId = 0
-const notationGroups: Record<NotationMode, NotationGroup[]> = {
-  jianpu: [
-    { label: '音级', items: ['1', '2', '3', '4', '5', '6', '7', '0'].map((glyph) => ({ label: glyph === '0' ? '休止符' : `音级 ${glyph}`, glyph })) },
-    { label: '八度与时值', items: [
-      { label: '上加一点', glyph: '1̇' }, { label: '上加两点', glyph: '1̇̇' }, { label: '下加一点', glyph: '1̣' }, { label: '下加两点', glyph: '1̣̣' },
-      { label: '下单线', glyph: '1̲' }, { label: '下双线', glyph: '1̳' }, { label: '附点', glyph: '·' }, { label: '延长一拍', glyph: '—' },
-    ] },
-    { label: '连音与节奏', items: [
-      { label: '连音线', glyph: '⌒' }, { label: '保持线', glyph: '⁀' }, { label: '二连音', glyph: '⟨2⟩' }, { label: '三连音', glyph: '⟨3⟩' }, { label: '五连音', glyph: '⟨5⟩' }, { label: '七连音', glyph: '⟨7⟩' },
-    ] },
-    { label: '小节与表情', items: [
-      { label: '分拍线', glyph: '/' }, { label: '单竖线', glyph: '|' }, { label: '双竖线', glyph: '||' }, { label: '终止线', glyph: '|]' }, { label: '左反复', glyph: '||:' }, { label: '右反复', glyph: ':||' },
-      { label: '渐慢', glyph: 'rit.' }, { label: '渐快', glyph: 'accel.' }, { label: '弱', glyph: 'p' }, { label: '强', glyph: 'f' },
-    ] },
-  ],
-  staff: [
-    { label: '音符时值', items: [
-      { label: '全音符', glyph: '𝅝' }, { label: '二分音符', glyph: '𝅗𝅥' }, { label: '四分音符', glyph: '♩' }, { label: '八分音符', glyph: '♪' },
-      { label: '十六分音符', glyph: '𝅘𝅥𝅯' }, { label: '三十二分音符', glyph: '𝅘𝅥𝅰' }, { label: '六十四分音符', glyph: '𝅘𝅥𝅱' },
-      { label: '附点全音符', glyph: '𝅝.' }, { label: '附点二分音符', glyph: '𝅗𝅥.' }, { label: '附点四分音符', glyph: '♩.' }, { label: '附点八分音符', glyph: '♪.' },
-      { label: '附点十六分音符', glyph: '𝅘𝅥𝅯.' }, { label: '附点三十二分音符', glyph: '𝅘𝅥𝅰.' }, { label: '附点六十四分音符', glyph: '𝅘𝅥𝅱.' },
-      { label: '复附点全音符', glyph: '𝅝..' }, { label: '复附点二分音符', glyph: '𝅗𝅥..' }, { label: '复附点四分音符', glyph: '♩..' }, { label: '复附点八分音符', glyph: '♪..' },
-      { label: '复附点十六分音符', glyph: '𝅘𝅥𝅯..' }, { label: '复附点三十二分音符', glyph: '𝅘𝅥𝅰..' }, { label: '复附点六十四分音符', glyph: '𝅘𝅥𝅱..' },
-    ] },
-    { label: '休止符', items: [
-      { label: '全休止符', glyph: '𝄻' }, { label: '二分休止符', glyph: '𝄼' }, { label: '四分休止符', glyph: '𝄽' }, { label: '八分休止符', glyph: '𝄾' }, { label: '十六分休止符', glyph: '𝄿' }, { label: '六十四分休止符', glyph: '𝅁' },
-    ] },
-    { label: '连音与奏法', items: [
-      { label: '连音线', glyph: '⁀' }, { label: '圆滑线', glyph: '⌒' }, { label: '二连音', glyph: '⟨2⟩' }, { label: '三连音', glyph: '⟨3⟩' }, { label: '五连音', glyph: '⟨5⟩' }, { label: '九连音', glyph: '⟨9⟩' },
-      { label: '延长记号', glyph: '𝄐' }, { label: '断音', glyph: '•' }, { label: '保持音', glyph: '—' }, { label: '重音', glyph: '>' },
-    ] },
-    { label: '谱号与小节', items: [
-      { label: '高音谱号', glyph: '𝄞' }, { label: '低音谱号', glyph: '𝄢' }, { label: '升号', glyph: '♯' }, { label: '降号', glyph: '♭' }, { label: '还原号', glyph: '♮' },
-      { label: '四四拍', glyph: '4/4' }, { label: '三四拍', glyph: '3/4' }, { label: '六八拍', glyph: '6/8' }, { label: '单小节线', glyph: '|' }, { label: '双小节线', glyph: '||' }, { label: '终止线', glyph: '||]' },
-    ] },
-  ],
-}
-const activeNotationGroups = computed(() => notationGroups[notationMode.value])
-const notationSummary = computed(() => notationTokens.value.length ? notationTokens.value.map((token) => token.glyph).join(' ') : '还没有加入谱面元素')
-
-function escapeXml(value: string) {
-  return value.replace(/[<>&'\"]/g, (character) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '\"': '&quot;' }[character] || character))
-}
-
-function buildNotationSvg(mode: NotationMode, tokens: NotationToken[]) {
-  const width = Math.max(720, 132 + tokens.length * 76)
-  const height = mode === 'staff' ? 230 : 190
-  const safeTokens = tokens.length ? tokens : [{ id: 0, label: '', glyph: '♩', category: '' }]
-  const textFont = mode === 'staff' ? 'Bravura, "Noto Music", "Segoe UI Symbol", serif' : 'ui-rounded, "PingFang SC", "Microsoft YaHei", sans-serif'
-  const background = mode === 'staff' ? '#fffdf8' : '#fff'
-  const accent = mode === 'staff' ? '#243b72' : '#304b93'
-  const lines = mode === 'staff' ? Array.from({ length: 5 }, (_, index) => `<line x1="62" y1="${76 + index * 18}" x2="${width - 46}" y2="${76 + index * 18}"/>`).join('') : ''
-  const title = mode === 'staff' ? '五线谱片段' : '简谱片段'
-  const tokenMarkup = safeTokens.map((token, index) => {
-    const x = 92 + index * 76
-    if (mode === 'staff') {
-      const isBar = /[|]/.test(token.glyph)
-      if (isBar) {
-        const bar = (lineX: number, strokeWidth = 2) => `<line x1="${lineX}" y1="62" x2="${lineX}" y2="158" stroke-width="${strokeWidth}"/>`
-        const dot = (dotX: number) => `<circle cx="${dotX}" cy="98" r="4" fill="${accent}" stroke="none"/><circle cx="${dotX}" cy="122" r="4" fill="${accent}" stroke="none"/>`
-        if (token.glyph === '||') return `${bar(x - 6)}${bar(x + 6)}`
-        if (token.glyph === '||]') return `${bar(x - 8)}${bar(x)}${bar(x + 10, 6)}`
-        if (token.glyph === '|]') return `${bar(x - 5)}${bar(x + 7, 6)}`
-        if (token.glyph === '||:') return `${bar(x - 7)}${bar(x + 5)}${dot(x + 15)}`
-        if (token.glyph === ':||') return `${dot(x - 15)}${bar(x - 5)}${bar(x + 7)}`
-        return bar(x)
-      }
-      return `<text x="${x}" y="126" class="staff-token">${escapeXml(token.glyph)}</text>`
-    }
-    const hasTopDot = token.glyph.includes('̇')
-    const hasBottomDot = token.glyph.includes('̣')
-    const hasSingle = token.glyph.includes('̲')
-    const hasDouble = token.glyph.includes('̳')
-    const display = token.glyph.replace(/[̣̲̳̇]/g, '')
-    const top = hasTopDot ? `<circle cx="${x}" cy="${76}" r="3.5"/>` : ''
-    const bottom = hasBottomDot ? `<circle cx="${x}" cy="${129}" r="3.5"/>` : ''
-    const underline = hasDouble ? `<line x1="${x - 17}" y1="${142}" x2="${x + 17}" y2="${142}"/><line x1="${x - 17}" y1="${148}" x2="${x + 17}" y2="${148}"/>` : hasSingle ? `<line x1="${x - 17}" y1="${144}" x2="${x + 17}" y2="${144}"/>` : ''
-    return `${top}${bottom}${underline}<text x="${x}" y="126" class="jianpu-token">${escapeXml(display)}</text>`
-  }).join('')
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="${width}" height="${height}" rx="18" fill="${background}"/><text x="32" y="35" class="notation-title">${title}</text><g fill="none" stroke="${accent}" stroke-linecap="round" stroke-linejoin="round">${lines}</g><g fill="${accent}" stroke="${accent}" stroke-linecap="round" stroke-linejoin="round" text-anchor="middle"><text x="${mode === 'staff' ? 38 : 42}" y="126" class="notation-clef">${mode === 'staff' ? '𝄞' : '1='}</text>${tokenMarkup}</g><text x="32" y="${height - 18}" class="notation-footer">MusicBank · ${escapeXml(notationSummary.value)}</text><style>.notation-title{font:600 14px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;fill:#8b94a3}.notation-footer{font:10px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;fill:#a4acb8}.notation-clef{font:32px ${textFont};fill:${accent}}.staff-token{font:42px ${textFont};fill:${accent};stroke:none}.jianpu-token{font:32px ${textFont};fill:${accent};stroke:none}</style></svg>`
-}
-const notationSvg = computed(() => buildNotationSvg(notationMode.value, notationTokens.value))
-const notationPreviewUrl = computed(() => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(notationSvg.value)}`)
-
-function openNotationEditor() {
-  showNotationPanel.value = true
-}
-function switchNotationMode(mode: NotationMode) {
-  if (notationMode.value === mode) return
-  if (notationTokens.value.length) {
-    notationTokens.value = []
-    notify('已切换谱面类型，当前元素已清空')
-  }
-  notationMode.value = mode
-}
-function addNotationItem(item: { label: string; glyph: string; category?: string }, group: NotationGroup) {
-  if (notationMode.value === 'jianpu' && group.label === '八度与时值' && (/[̣̲̳̇]/.test(item.glyph) || item.glyph === '·')) {
-    const last = notationTokens.value[notationTokens.value.length - 1]
-    if (!last || !/^[0-7](?:[̣̲̳̇]|·)*$/u.test(last.glyph)) {
-      notify('请先选择一个简谱音级，再添加加点或下线')
-      return
-    }
-    const modifier = item.glyph.replace(/1/g, '')
-    last.glyph += modifier
-    last.label = `${last.label} · ${item.label}`
-    return
-  }
-  notationTokens.value.push({ id: ++notationTokenId, label: item.label, glyph: item.glyph, category: item.category || group.label })
-}
-function removeLastNotationItem() {
-  notationTokens.value.pop()
-}
-function clearNotation() {
-  notationTokens.value = []
-}
-function closeNotationEditor() {
-  showNotationPanel.value = false
-}
+const notationDocument = ref('')
+const notationImageSource = ref('')
+const notationExportBusy = ref(false)
+function openNotationEditor() { showNotationPanel.value = true }
+function closeNotationEditor() { showNotationPanel.value = false }
 
 function openQuestionPreview() {
   showQuestionPreview.value = true
@@ -243,13 +125,12 @@ function closeQuestionPreview() {
   showQuestionPreview.value = false
 }
 
-async function exportNotationImage() {
-  if (!notationTokens.value.length) {
-    notify('请先在面板中加入至少一个谱面元素')
-    return
-  }
+async function exportNotationImage(svg: string) {
+  if (notationExportBusy.value) return
+  notationExportBusy.value = true
+  const exportedSource = notationDocument.value
   const revision = ++imageImportRevision
-  const svgBlob = new Blob([notationSvg.value], { type: 'image/svg+xml;charset=utf-8' })
+  const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' })
   const svgUrl = URL.createObjectURL(svgBlob)
   try {
     const image = new Image()
@@ -260,6 +141,7 @@ async function exportNotationImage() {
     const scale = 2
     canvas.width = image.width * scale
     canvas.height = image.height * scale
+    if (canvas.width * canvas.height > 40_000_000 || canvas.height > 32767) throw new Error('乐谱过长，请拆分为多道题目后生成图片')
     const context = canvas.getContext('2d')
     if (!context) throw new Error('当前设备不支持谱面导出')
     context.fillStyle = '#ffffff'
@@ -278,6 +160,7 @@ async function exportNotationImage() {
       imageAssetId.value = ''
       imageAsset.value = canvas.toDataURL('image/png')
     }
+    notationImageSource.value = exportedSource
     showNotationPanel.value = false
     notify('谱面已生成图片并加入当前题目')
   } catch (error) {
@@ -285,6 +168,7 @@ async function exportNotationImage() {
     notify(error instanceof Error ? error.message : '谱面导出失败')
   } finally {
     URL.revokeObjectURL(svgUrl)
+    notationExportBusy.value = false
   }
 }
 
@@ -554,12 +438,15 @@ function resetForm() {
   if (imageAsset.value?.startsWith('blob:')) URL.revokeObjectURL(imageAsset.value)
   imageAsset.value = ''
   imageAssetId.value = ''
-  notationTokens.value = []
+  notationDocument.value = ''
+  notationImageSource.value = ''
   showNotationPanel.value = false
   isPlaying.value = false
 }
 
 function editQuestion(question: Question) {
+  notationDocument.value = question.notationDocument || ''
+  notationImageSource.value = notationDocument.value
   audioImportRevision += 1
   imageImportRevision += 1
   currentSavedId.value = question.id
@@ -719,6 +606,8 @@ async function handleImageChange(event: Event) {
   const revision = ++imageImportRevision
   if (imageAsset.value?.startsWith('blob:')) URL.revokeObjectURL(imageAsset.value)
   const previewUrl = URL.createObjectURL(file)
+  notationDocument.value = ''
+  notationImageSource.value = ''
   imageAsset.value = previewUrl
   imageAssetId.value = ''
   if (window.musicBank) {
@@ -752,6 +641,8 @@ function removeAudio() {
 }
 
 function removeImage() {
+  notationDocument.value = ''
+  notationImageSource.value = ''
   imageImportRevision += 1
   if (imageAsset.value.startsWith('blob:')) URL.revokeObjectURL(imageAsset.value)
   imageAsset.value = ''
@@ -760,6 +651,10 @@ function removeImage() {
 }
 
 function validateForm() {
+  if (notationDocument.value && notationDocument.value !== notationImageSource.value) {
+    formError.value = '乐谱有未生成的修改，请打开乐谱编辑器并点击“生成题目图片”后保存。'
+    return false
+  }
   if (window.musicBank && ((audioAsset.url && !audioAsset.id) || (imageAsset.value && !imageAssetId.value))) {
     formError.value = '素材尚未保存到应用，请重新导入或移除后再保存题目。'
     return false
@@ -799,7 +694,7 @@ async function persistQuestion(status: Question['status']) {
   if (questionSaving.value || !validateForm()) return false
   const id = currentSavedId.value || nextQuestionId.value
   const existingIndex = questions.value.findIndex((item) => item.id === id)
-  const item: Question = { id, title: form.prompt.trim(), grade: form.grade, category: form.category, subcategory: form.subcategory, source: form.source, type: questionType.value, status, hasAudio: Boolean(audioAsset.url), hasImage: Boolean(imageAsset.value), audioName: audioAsset.name, audioDuration: audioAsset.duration, audioAssetId: audioAsset.id || undefined, imageAssetId: imageAssetId.value || undefined, updated: '刚刚', difficulty: form.difficulty, options: optionTexts.value.slice(0, showMore.value ? 6 : 4), correctAnswer: questionType.value === '选择题' ? [...selectedAnswers.value].sort().join(',') : undefined, answerMode: questionType.value === '选择题' ? choiceMode.value : undefined, fillAnswers: form.fillAnswer.split('\n').map((answer) => answer.trim()).filter(Boolean), referenceAnswer: form.shortAnswer, explanation: form.explanation }
+  const item: Question = { id, title: form.prompt.trim(), grade: form.grade, category: form.category, subcategory: form.subcategory, source: form.source, type: questionType.value, status, hasAudio: Boolean(audioAsset.url), hasImage: Boolean(imageAsset.value), audioName: audioAsset.name, audioDuration: audioAsset.duration, audioAssetId: audioAsset.id || undefined, imageAssetId: imageAssetId.value || undefined, notationDocument: notationDocument.value || undefined, updated: '刚刚', difficulty: form.difficulty, options: optionTexts.value.slice(0, showMore.value ? 6 : 4), correctAnswer: questionType.value === '选择题' ? [...selectedAnswers.value].sort().join(',') : undefined, answerMode: questionType.value === '选择题' ? choiceMode.value : undefined, fillAnswers: form.fillAnswer.split('\n').map((answer) => answer.trim()).filter(Boolean), referenceAnswer: form.shortAnswer, explanation: form.explanation }
   questionSaving.value = true
   try {
     if (window.musicBank) await window.musicBank.questions.save(item)
@@ -1219,7 +1114,7 @@ function handleShortcut(event: KeyboardEvent) {
 
         <section v-else-if="activeView === 'add'" class="view add-view"><div class="add-heading"><div><div class="eyebrow">题库管理 / 新增试题</div><h1>{{ currentSavedId ? '编辑试题' : '创建一道新试题' }}</h1><p>把灵感记录下来，建立更有质量的音乐学习内容。</p></div><div class="draft-indicator"><span class="status-dot"></span>{{ questionSaving ? '正在保存…' : '⌘ S 保存草稿' }}</div></div><div class="stepper"><button :class="{ active: addStep === 1, done: addStep > 1 }" @click="addStep = 1"><span>01</span><div><strong>基本信息</strong><small>先定义试题的归属</small></div></button><div class="step-line" :class="{ filled: addStep > 1 }"></div><button :class="{ active: addStep === 2 }" @click="addStep = 2"><span>02</span><div><strong>题目内容</strong><small>录入题干、答案与解析</small></div></button></div>
           <div v-if="addStep === 1" class="form-card"><div class="form-card-heading"><div><h2>基本信息</h2><p>为这道试题选择合适的分类和题型，系统会自动生成唯一题号。</p></div><div class="generated-id">题号 <strong>{{ currentSavedId || nextQuestionId }}</strong></div></div><div class="form-grid"><label class="field"><span>年级 <em>*</em></span><select v-model="form.grade"><option value="">请选择年级</option><option>一年级</option><option>二年级</option><option>三年级</option><option>四年级</option><option>五年级</option><option>六年级</option></select></label><label class="field"><span>一级分类 <em>*</em></span><select v-model="form.category"><option value="">请选择一级分类</option><option v-for="category in categoryNames" :key="category">{{ category }}</option></select></label><label class="field"><span>二级分类 <small>选填</small></span><select v-model="form.subcategory"><option value="">选择二级分类</option><option v-for="subcategory in subcategoryNames" :key="subcategory">{{ subcategory }}</option></select></label><label class="field"><span>试题类型 <em>*</em></span><div class="type-options"><button v-for="type in ['选择题', '填空题', '简答题']" :key="type" :class="{ selected: questionType === type }" @click="questionType = type as QuestionType"><span class="radio-dot"></span>{{ type }}</button></div></label><label class="field"><span>难度 <small>选填</small></span><div class="difficulty-options"><button v-for="level in ['基础', '中等', '进阶']" :key="level" :class="{ selected: form.difficulty === level }" @click="form.difficulty = level">{{ level }}</button></div></label><label class="field"><span>试题来源 <small>选填</small></span><input v-model="form.source" placeholder="例如：2025 年省测真题" /></label></div><div class="form-tip"><svg-icon name="info" /><span>题型可以在后续步骤中随时调整，音乐听辨内容可与三种题型自由组合。</span></div><div v-if="formError" class="form-error"><svg-icon name="info" />{{ formError }}</div><div class="form-actions"><button class="ghost-button" @click="go('library')">取消</button><button class="primary-button" @click="form.grade && form.category ? (formError = '', addStep = 2) : (formError = '请先选择年级和一级分类。')">下一步 <svg-icon name="arrow" /></button></div></div>
-          <div v-else class="editor-layout"><div class="editor-main"><div class="editor-card"><div class="section-heading"><div class="section-index">01</div><div><h2>题目</h2><p>输入题干内容，可插入图片、音频或音乐记谱符号。</p></div><span class="required-label">必填</span></div><div class="editor-toolbar"><button><svg-icon name="bold" /></button><button><svg-icon name="italic" /></button><span></span><button @click="openImagePicker"><svg-icon name="image" />图片</button><button @click="openAudioPicker"><svg-icon name="music" />音频</button><button type="button" title="打开谱面编辑器，完成后生成题目图片" aria-label="打开谱面编辑器" aria-haspopup="dialog" :aria-expanded="showNotationPanel" @click="openNotationEditor"><svg-icon name="music" />谱面</button><span></span><button><svg-icon name="undo" /></button><button><svg-icon name="redo" /></button></div><teleport to="body"><transition name="sheet"><div v-if="showNotationPanel" class="notation-sheet-backdrop" @click.self="closeNotationEditor"><section class="notation-sheet" role="dialog" aria-modal="true" aria-labelledby="notation-title"><header class="notation-sheet-header"><div><div class="eyebrow">MusicBank · 谱面工具</div><h2 id="notation-title">谱面编辑器</h2><p>参考 Dolce 的按需符号面板，编辑完成后导出为题目图片。</p></div><button type="button" class="icon-button" aria-label="关闭谱面编辑器" @click="closeNotationEditor"><svg-icon name="close" /></button></header><div class="notation-mode-switch"><button type="button" :class="{ selected: notationMode === 'jianpu' }" @click="switchNotationMode('jianpu')"><span>简谱</span><small>数字、加点、下线</small></button><button type="button" :class="{ selected: notationMode === 'staff' }" @click="switchNotationMode('staff')"><span>五线谱</span><small>音符、休止、连音</small></button></div><div class="notation-sheet-body"><div class="notation-palette"><div class="notation-palette-heading"><div><strong>符号面板</strong><span>按类别选择，元素会按顺序写入下方乐谱</span></div><span class="notation-palette-hint">{{ notationMode === 'jianpu' ? '简谱模式' : '五线谱模式' }}</span></div><div v-for="group in activeNotationGroups" :key="group.label" class="notation-palette-group"><div class="notation-group-title">{{ group.label }}</div><div class="notation-key-grid"><button v-for="item in group.items" :key="`${group.label}-${item.label}-${item.glyph}`" type="button" class="notation-key" :title="item.label" @click="addNotationItem(item, group)"><span>{{ item.glyph }}</span><small>{{ item.label }}</small></button></div></div></div><aside class="notation-preview-pane"><div class="notation-preview-head"><div><strong>实时预览</strong><span>{{ notationMode === 'jianpu' ? '简谱' : '五线谱' }} · {{ notationTokens.length }} 个元素</span></div><button type="button" class="text-button" :disabled="!notationTokens.length" @click="removeLastNotationItem">撤销一步</button></div><div class="notation-canvas"><img :src="notationPreviewUrl" alt="谱面实时预览" /></div><div class="notation-token-summary"><div class="notation-summary-label">已加入</div><div v-if="notationTokens.length" class="notation-token-chips"><button v-for="token in notationTokens" :key="token.id" type="button" class="notation-token-chip" :title="`移除 ${token.label}`" @click="notationTokens = notationTokens.filter((item) => item.id !== token.id)">{{ token.glyph }}</button></div><span v-else class="notation-empty-hint">点击左侧按钮开始录入</span></div><div class="notation-sheet-actions"><button type="button" class="ghost-button" @click="clearNotation">清空</button><button type="button" class="secondary-button" @click="closeNotationEditor">继续编辑</button><button type="button" class="primary-button" @click="exportNotationImage"><svg-icon name="image" />生成题目图片</button></div></aside></div></section></div></transition></teleport><teleport to="body"><transition name="preview-modal"><div v-if="showQuestionPreview" class="question-preview-backdrop" @click.self="closeQuestionPreview"><section class="question-preview-modal" role="dialog" aria-modal="true" aria-labelledby="question-preview-title"><header class="question-preview-header"><div><div class="eyebrow">MusicBank · 题目预览</div><h2 id="question-preview-title">{{ questionType }} · {{ form.grade || '六年级' }}</h2></div><button type="button" class="icon-button" aria-label="关闭题目预览" @click="closeQuestionPreview"><svg-icon name="close" /></button></header><div class="question-preview-paper"><div class="question-preview-meta"><span>{{ form.category || '音乐综合' }}</span><span>{{ form.difficulty }}</span><span>草稿预览</span></div><h3>{{ form.prompt || '请输入题目内容...' }}</h3><img v-if="imageAsset" :src="imageAsset" alt="题目插入图片" class="question-preview-image" /><div v-if="audioAsset.url" class="question-preview-audio"><audio :src="audioAsset.url" controls preload="metadata"></audio></div><div v-if="questionType === '选择题'" class="question-preview-options"><div v-for="(letter, index) in (showMore ? ['A','B','C','D','E','F'] : ['A','B','C','D'])" :key="letter"><b>{{ letter }}.</b><span>{{ optionTexts[index] || '待填写' }}</span></div></div><div v-else-if="questionType === '填空题'" class="question-preview-answer-line">请填写答案：＿＿＿＿＿＿</div><div v-else class="question-preview-answer-line">请结合题干作答。</div></div><footer class="question-preview-footer"><span>这是学生看到的题目样式，正确答案与解析不会显示。</span><button type="button" class="primary-button" @click="closeQuestionPreview">继续编辑</button></footer></section></div></transition></teleport><textarea v-model="form.prompt" class="rich-editor" placeholder="请输入题目内容..."></textarea><input ref="imageInput" class="hidden-file-input" type="file" accept="image/jpeg,image/png,image/webp" @change="handleImageChange" /><input ref="audioInput" class="hidden-file-input" type="file" accept="audio/mpeg,audio/wav" @change="handleAudioChange" /><div v-if="imageAsset" class="image-preview"><img :src="imageAsset" alt="已插入的题目图片" /><span>图片素材已加入题目</span><button type="button" class="text-button" @click="removeImage">移除图片</button></div><div v-if="audioAsset.url" class="audio-block question-audio-player"><div class="audio-title"><strong>{{ audioAsset.name }}</strong><button type="button" class="text-button" @click="removeAudio">移除音频</button></div><audio ref="audioElement" :src="audioAsset.url" controls preload="metadata" @loadedmetadata="syncAudioDuration" @error="notify('音频无法播放，请更换素材')"></audio></div></div><div class="editor-card"><div class="section-heading"><div class="section-index">02</div><div><h2>答案</h2><p>填写正确答案，系统会在练习和考试时使用。</p></div><span class="required-label">必填</span></div><div v-if="questionType === '选择题'" class="options-editor"><div class="choice-mode-row"><span>正确答案方式</span><div class="choice-mode-toggle"><button type="button" :class="{ selected: choiceMode === 'single' }" @click="setChoiceMode('single')">单选</button><button type="button" :class="{ selected: choiceMode === 'multiple' }" @click="setChoiceMode('multiple')">多选</button></div><small>{{ choiceMode === 'multiple' ? '可同时选择多个正确选项' : '只能选择一个正确选项' }}</small></div><div v-for="(letter, index) in (showMore ? ['A','B','C','D','E','F'] : ['A','B','C','D'])" :key="letter" class="option-row"><button type="button" class="option-radio" :class="{ selected: selectedAnswers.includes(letter), multiple: choiceMode === 'multiple' }" @click="toggleChoiceAnswer(letter)"><span></span></button><b>{{ letter }}</b><input v-model="optionTexts[index]" :placeholder="`请输入选项 ${letter} 的内容`" /><button v-if="letter === 'D' && !showMore" type="button" class="remove-option" @click="showMore = true"><svg-icon name="plus" />增加选项</button></div><button v-if="showMore" type="button" class="add-option" @click="collapseOptions">收起扩展选项</button></div><textarea v-else-if="questionType === '填空题'" v-model="form.fillAnswer" class="answer-textarea" placeholder="请输入标准答案，每行一个空"></textarea><textarea v-else v-model="form.shortAnswer" class="answer-textarea large" placeholder="请输入参考答案，可分段填写"></textarea></div><div class="editor-card"><div class="section-heading"><div class="section-index">03</div><div><h2>解析</h2><p>帮助学生理解答案背后的音乐知识。</p></div><span class="optional-label">选填</span></div><textarea v-model="form.explanation" class="answer-textarea explanation" placeholder="请输入试题解析、听辨技巧或作品背景..."></textarea></div><div v-if="formError" class="form-error editor-error"><svg-icon name="info" />{{ formError }}</div></div><aside class="editor-aside"><div class="aside-card"><div class="aside-heading"><h3>录入提示</h3><svg-icon name="spark" /></div><div class="aside-tip"><span>01</span><p>题干尽量使用完整、清晰的句子。</p></div><div class="aside-tip"><span>02</span><p>音频建议控制在 30MB 以内，支持 MP3 和 WAV。</p></div><div class="aside-tip"><span>03</span><p>答案选项至少保留两个有效内容。</p></div></div><div class="aside-card preview-card"><div class="aside-heading"><h3>实时预览</h3><button class="text-button" @click="openQuestionPreview">打开预览 <svg-icon name="arrow" /></button></div><div class="preview-paper"><span class="preview-label">{{ questionType }} · {{ form.grade || '六年级' }}</span><strong>{{ form.prompt || '请输入题目内容...' }}</strong><div v-if="audioAsset.url" class="mini-audio"><svg-icon name="play" /><span>{{ audioAsset.name }}</span><small>{{ audioAsset.duration }}</small></div><div class="mini-options" v-if="questionType === '选择题'"><span v-for="(letter, index) in ['A','B','C','D']" :key="letter">{{ letter }}. {{ optionTexts[index] || '待填写' }}</span></div><div v-else class="mini-answer">{{ questionType === '填空题' ? (form.fillAnswer || '待填写标准答案') : (form.shortAnswer || '待填写参考答案') }}</div></div></div></aside></div><div v-if="addStep === 2" class="save-bar"><button class="ghost-button" @click="addStep = 1">返回上一步</button><div><button class="secondary-button" :disabled="questionSaving" @click="saveQuestion()">保存草稿 <span>⌘ S</span></button><button class="secondary-button" :disabled="questionSaving" @click="saveQuestion(true)">保存并新增</button><button class="primary-button" :disabled="questionSaving" @click="publishQuestion">保存并发布 <svg-icon name="arrow" /></button></div></div>
+          <div v-else class="editor-layout"><div class="editor-main"><div class="editor-card"><div class="section-heading"><div class="section-index">01</div><div><h2>题目</h2><p>输入题干内容，可插入图片、音频或音乐记谱符号。</p></div><span class="required-label">必填</span></div><div class="editor-toolbar"><button><svg-icon name="bold" /></button><button><svg-icon name="italic" /></button><span></span><button @click="openImagePicker"><svg-icon name="image" />图片</button><button @click="openAudioPicker"><svg-icon name="music" />音频</button><button type="button" title="打开谱面编辑器，完成后生成题目图片" aria-label="打开谱面编辑器" aria-haspopup="dialog" :aria-expanded="showNotationPanel" @click="openNotationEditor"><svg-icon name="music" />谱面</button><span></span><button><svg-icon name="undo" /></button><button><svg-icon name="redo" /></button></div><teleport to="body"><NotationEditor v-if="showNotationPanel" :source="notationDocument" :busy="notationExportBusy" @change="notationDocument = $event" @close="closeNotationEditor" @export="exportNotationImage" /></teleport><teleport to="body"><transition name="preview-modal"><div v-if="showQuestionPreview" class="question-preview-backdrop" @click.self="closeQuestionPreview"><section class="question-preview-modal" role="dialog" aria-modal="true" aria-labelledby="question-preview-title"><header class="question-preview-header"><div><div class="eyebrow">MusicBank · 题目预览</div><h2 id="question-preview-title">{{ questionType }} · {{ form.grade || '六年级' }}</h2></div><button type="button" class="icon-button" aria-label="关闭题目预览" @click="closeQuestionPreview"><svg-icon name="close" /></button></header><div class="question-preview-paper"><div class="question-preview-meta"><span>{{ form.category || '音乐综合' }}</span><span>{{ form.difficulty }}</span><span>草稿预览</span></div><h3>{{ form.prompt || '请输入题目内容...' }}</h3><img v-if="imageAsset" :src="imageAsset" alt="题目插入图片" class="question-preview-image" /><div v-if="audioAsset.url" class="question-preview-audio"><audio :src="audioAsset.url" controls preload="metadata"></audio></div><div v-if="questionType === '选择题'" class="question-preview-options"><div v-for="(letter, index) in (showMore ? ['A','B','C','D','E','F'] : ['A','B','C','D'])" :key="letter"><b>{{ letter }}.</b><span>{{ optionTexts[index] || '待填写' }}</span></div></div><div v-else-if="questionType === '填空题'" class="question-preview-answer-line">请填写答案：＿＿＿＿＿＿</div><div v-else class="question-preview-answer-line">请结合题干作答。</div></div><footer class="question-preview-footer"><span>这是学生看到的题目样式，正确答案与解析不会显示。</span><button type="button" class="primary-button" @click="closeQuestionPreview">继续编辑</button></footer></section></div></transition></teleport><textarea v-model="form.prompt" class="rich-editor" placeholder="请输入题目内容..."></textarea><input ref="imageInput" class="hidden-file-input" type="file" accept="image/jpeg,image/png,image/webp" @change="handleImageChange" /><input ref="audioInput" class="hidden-file-input" type="file" accept="audio/mpeg,audio/wav" @change="handleAudioChange" /><div v-if="imageAsset" class="image-preview"><img :src="imageAsset" alt="已插入的题目图片" /><span>图片素材已加入题目</span><button type="button" class="text-button" @click="removeImage">移除图片</button></div><div v-if="audioAsset.url" class="audio-block question-audio-player"><div class="audio-title"><strong>{{ audioAsset.name }}</strong><button type="button" class="text-button" @click="removeAudio">移除音频</button></div><audio ref="audioElement" :src="audioAsset.url" controls preload="metadata" @loadedmetadata="syncAudioDuration" @error="notify('音频无法播放，请更换素材')"></audio></div></div><div class="editor-card"><div class="section-heading"><div class="section-index">02</div><div><h2>答案</h2><p>填写正确答案，系统会在练习和考试时使用。</p></div><span class="required-label">必填</span></div><div v-if="questionType === '选择题'" class="options-editor"><div class="choice-mode-row"><span>正确答案方式</span><div class="choice-mode-toggle"><button type="button" :class="{ selected: choiceMode === 'single' }" @click="setChoiceMode('single')">单选</button><button type="button" :class="{ selected: choiceMode === 'multiple' }" @click="setChoiceMode('multiple')">多选</button></div><small>{{ choiceMode === 'multiple' ? '可同时选择多个正确选项' : '只能选择一个正确选项' }}</small></div><div v-for="(letter, index) in (showMore ? ['A','B','C','D','E','F'] : ['A','B','C','D'])" :key="letter" class="option-row"><button type="button" class="option-radio" :class="{ selected: selectedAnswers.includes(letter), multiple: choiceMode === 'multiple' }" @click="toggleChoiceAnswer(letter)"><span></span></button><b>{{ letter }}</b><input v-model="optionTexts[index]" :placeholder="`请输入选项 ${letter} 的内容`" /><button v-if="letter === 'D' && !showMore" type="button" class="remove-option" @click="showMore = true"><svg-icon name="plus" />增加选项</button></div><button v-if="showMore" type="button" class="add-option" @click="collapseOptions">收起扩展选项</button></div><textarea v-else-if="questionType === '填空题'" v-model="form.fillAnswer" class="answer-textarea" placeholder="请输入标准答案，每行一个空"></textarea><textarea v-else v-model="form.shortAnswer" class="answer-textarea large" placeholder="请输入参考答案，可分段填写"></textarea></div><div class="editor-card"><div class="section-heading"><div class="section-index">03</div><div><h2>解析</h2><p>帮助学生理解答案背后的音乐知识。</p></div><span class="optional-label">选填</span></div><textarea v-model="form.explanation" class="answer-textarea explanation" placeholder="请输入试题解析、听辨技巧或作品背景..."></textarea></div><div v-if="formError" class="form-error editor-error"><svg-icon name="info" />{{ formError }}</div></div><aside class="editor-aside"><div class="aside-card"><div class="aside-heading"><h3>录入提示</h3><svg-icon name="spark" /></div><div class="aside-tip"><span>01</span><p>题干尽量使用完整、清晰的句子。</p></div><div class="aside-tip"><span>02</span><p>音频建议控制在 30MB 以内，支持 MP3 和 WAV。</p></div><div class="aside-tip"><span>03</span><p>答案选项至少保留两个有效内容。</p></div></div><div class="aside-card preview-card"><div class="aside-heading"><h3>实时预览</h3><button class="text-button" @click="openQuestionPreview">打开预览 <svg-icon name="arrow" /></button></div><div class="preview-paper"><span class="preview-label">{{ questionType }} · {{ form.grade || '六年级' }}</span><strong>{{ form.prompt || '请输入题目内容...' }}</strong><div v-if="audioAsset.url" class="mini-audio"><svg-icon name="play" /><span>{{ audioAsset.name }}</span><small>{{ audioAsset.duration }}</small></div><div class="mini-options" v-if="questionType === '选择题'"><span v-for="(letter, index) in ['A','B','C','D']" :key="letter">{{ letter }}. {{ optionTexts[index] || '待填写' }}</span></div><div v-else class="mini-answer">{{ questionType === '填空题' ? (form.fillAnswer || '待填写标准答案') : (form.shortAnswer || '待填写参考答案') }}</div></div></div></aside></div><div v-if="addStep === 2" class="save-bar"><button class="ghost-button" @click="addStep = 1">返回上一步</button><div><button class="secondary-button" :disabled="questionSaving" @click="saveQuestion()">保存草稿 <span>⌘ S</span></button><button class="secondary-button" :disabled="questionSaving" @click="saveQuestion(true)">保存并新增</button><button class="primary-button" :disabled="questionSaving" @click="publishQuestion">保存并发布 <svg-icon name="arrow" /></button></div></div>
         </section>
         <section v-else-if="activeView === 'practice'" class="view practice-view"><div class="practice-heading"><div><div class="eyebrow">学习与考试 / 顺序练习</div><h1>{{ studyMode === 'special' ? '专项练习' : '顺序练习' }}</h1><p>按题库顺序练习，提交后查看答案和解析。</p></div><div class="practice-progress"><strong>{{ practiceIndex + 1 }}</strong><span>/ {{ practiceQuestions.length || 0 }} 题</span></div></div><div v-if="studyMode === 'special'" class="filter-bar"><select v-model="practiceGrade" aria-label="练习年级"><option>全部年级</option><option v-for="grade in ['一年级','二年级','三年级','四年级','五年级','六年级']" :key="grade">{{ grade }}</option></select><select v-model="practiceCategory" aria-label="练习分类"><option>全部分类</option><option v-for="category in practiceCategories" :key="category">{{ category }}</option></select><button type="button" class="filter-button" :aria-pressed="practiceAudioOnly" @click="practiceAudioOnly = !practiceAudioOnly"><svg-icon name="music" />{{ practiceAudioOnly ? '仅含音频 ✓' : '仅含音频' }}</button></div><div v-if="practiceCurrent" class="practice-layout"><div class="practice-main"><div class="practice-meta"><span class="category-pill">{{ practiceCurrent.grade }}</span><span class="category-pill">{{ practiceCurrent.category }}</span><span class="type-text">{{ practiceCurrent.type }}</span><span class="practice-id">{{ practiceCurrent.id }}</span></div><div class="practice-card"><div class="practice-card-top"><span class="practice-number">{{ String(practiceIndex + 1).padStart(2, '0') }}</span><span v-if="practiceCurrent.hasAudio" class="audio-badge"><svg-icon name="music" />听辨题</span></div><h2>{{ practiceCurrent.title }}</h2><img v-if="practiceImageUrl" :key="practiceImageUrl" :src="practiceImageUrl" class="question-stimulus-image" alt="题目图片或乐谱" /><div v-if="practiceCurrent.hasAudio" class="practice-audio question-audio-player"><div class="audio-title"><strong>{{ practiceCurrent.audioName || '音乐片段' }}</strong><span>{{ practiceCurrent.audioDuration || '听辨音频' }}</span></div><audio ref="practiceAudioElement" :key="practiceAudioUrl" :src="practiceAudioUrl" controls preload="metadata" @error="notify('音频无法播放，请检查题目素材')"></audio></div><div v-if="practiceCurrent.type === '选择题'"><div class="choice-answer-hint">{{ practiceCurrent.answerMode === 'multiple' || answerLetters(practiceCurrent.correctAnswer).length > 1 ? '多选题 · 可选择多个答案' : '单选题 · 请选择一个答案' }}</div><div class="practice-options"><button v-for="(option, index) in (practiceCurrent.options || ['二胡','小提琴','琵琶','竹笛'])" :key="option + index" :class="{ selected: practiceChoiceAnswers.includes(String.fromCharCode(65 + index)), multiple: practiceCurrent.answerMode === 'multiple' || answerLetters(practiceCurrent.correctAnswer).length > 1, correct: practiceSubmitted && answerLetters(practiceCurrent.correctAnswer).includes(String.fromCharCode(65 + index)), incorrect: practiceSubmitted && practiceChoiceAnswers.includes(String.fromCharCode(65 + index)) && !answerLetters(practiceCurrent.correctAnswer).includes(String.fromCharCode(65 + index)) && practiceResult === 'wrong' }" @click="togglePracticeChoice(String.fromCharCode(65 + index))"><span>{{ String.fromCharCode(65 + index) }}</span>{{ option }}</button></div></div><textarea v-else-if="practiceCurrent.type === '填空题'" v-model="practiceAnswer" :readonly="practiceSubmitted" class="practice-answer-input" placeholder="请输入答案"></textarea><textarea v-else v-model="practiceAnswer" :readonly="practiceSubmitted" class="practice-answer-input large" placeholder="请输入你的答案，提交后与参考答案对照"></textarea><div v-if="practiceSubmitted" class="practice-feedback" :class="practiceResult"><div class="feedback-icon"><svg-icon :name="practiceResult === 'correct' ? 'check' : practiceResult === 'pending' ? 'info' : 'close'" /></div><div><strong>{{ practiceResult === 'correct' ? '回答正确' : practiceResult === 'pending' ? '请自我核对参考答案' : '再想一想' }}</strong><p v-if="practiceResult === 'wrong'">正确答案：{{ practiceCurrent.type === '选择题' ? formatChoiceAnswer(practiceCurrent.correctAnswer) : (practiceCurrent.fillAnswers?.[0] || '参考答案见下方解析') }}</p><p v-else-if="practiceResult === 'pending'">简答题暂不自动评分，请结合参考答案判断是否掌握。</p></div></div><div v-if="practiceSubmitted && (practiceCurrent.explanation || practiceCurrent.referenceAnswer || practiceResult !== 'correct')" class="practice-explanation"><strong>解析</strong><p>{{ practiceCurrent.explanation || practiceCurrent.referenceAnswer || '这道题的解析正在完善中。' }}</p></div></div><div class="practice-actions"><button class="ghost-button" :disabled="practiceIndex === 0" @click="previousPractice"><svg-icon name="chevron-left" />上一题</button><button v-if="!practiceSubmitted" class="primary-button" @click="submitPractice">提交答案 <svg-icon name="arrow" /></button><button v-else class="primary-button" @click="nextPractice">下一题 <svg-icon name="arrow" /></button></div></div><aside class="practice-aside"><div class="aside-card practice-stat-card"><div class="aside-heading"><h3>本次练习</h3><svg-icon name="spark" /></div><div class="practice-score"><strong>{{ practiceSubmitted && practiceResult === 'correct' ? '100' : '—' }}</strong><span>当前得分</span></div><div class="practice-stat-row"><span>已完成</span><b>{{ practiceCompletedCount }} / {{ practiceQuestions.length }}</b></div><div class="practice-stat-row"><span>正确率</span><b>{{ practiceAccuracy }}</b></div></div><div class="aside-card question-map"><div class="aside-heading"><h3>答题卡</h3><span>{{ practiceQuestions.length }} 题</span></div><div class="map-grid"><button v-for="(_, index) in practiceQuestions" :key="index" :class="{ current: index === practiceIndex, answered: Boolean(practiceResponses[practiceQuestions[index].id]) }" @click="practiceIndex = index; resetPractice()">{{ index + 1 }}</button></div></div></aside></div><div v-else class="empty-practice"><div class="placeholder-icon"><svg-icon name="book" /></div><h2>{{ studyMode === 'special' ? '没有符合筛选条件的试题' : '还没有已发布试题' }}</h2><p>请调整筛选条件，或创建并发布试题后再练习。</p><button class="primary-button" @click="go('add')">去新增试题 <svg-icon name="arrow" /></button></div></section>
 
