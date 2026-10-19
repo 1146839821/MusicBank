@@ -61,4 +61,17 @@ describe('backup restore rollback', () => {
       expect(readFileSync(join(database.imagePath, 'original.png'), 'utf8')).toBe('original')
     } finally { database.close() }
   })
+  it.each(['truncated', 'checksum'])('rejects %s media before modifying the original data', (failure) => {
+    const database = setup()
+    try {
+      const backup = payload()
+      if (failure === 'truncated') backup.assets[0].bytesBase64 = ''
+      else backup.assets[0].record.sha256 = '0'.repeat(64)
+      expect(() => restoreBackup(database, backup)).toThrow(/素材/)
+      expect(database.listQuestions()[0].id).toBe('ORIGINAL')
+      expect(readFileSync(join(database.imagePath, 'original.png'), 'utf8')).toBe('original')
+      expect(readdirSync(database.root).some((name) => name.startsWith('.restore-'))).toBe(false)
+    } finally { database.close() }
+  })
+
 })

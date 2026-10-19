@@ -4,7 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { restoreBackup } from './restore-backup.js'
-import { isBackupAssetFilename } from './backup-validation.js'
+import { isBackupAssetFilename, verifyBackupAssetBytes } from './backup-validation.js'
 import { MusicBankDatabase, createAssetRecord } from './db.js'
 import type { AssetRecord, BackupPayload, ExamAnswerRecord, ExamAttemptRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile } from './types.js'
 
@@ -63,7 +63,10 @@ app.whenReady().then(() => {
     const assets = database.listAssets().map((record) => {
       const folder = record.assetType === 'audio' ? database.audioPath : database.imagePath
       const filePath = join(folder, record.storedName)
-      return { record, bytesBase64: existsSync(filePath) ? readFileSync(filePath).toString('base64') : '' }
+      if (!existsSync(filePath)) throw new Error(`素材文件缺失，备份已取消：${record.originalName}`)
+      const bytes = readFileSync(filePath)
+      verifyBackupAssetBytes(record, bytes)
+      return { record, bytesBase64: bytes.toString('base64') }
     })
     const payload: BackupPayload = { format: 'musicbank-backup', version: 1, exportedAt: new Date().toISOString(), questions: database.listQuestions(), papers: database.listPapers(), wrongQuestionIds: database.listWrongQuestionIds(), assets }
     writeFileSync(result.filePath, JSON.stringify(payload), 'utf8')

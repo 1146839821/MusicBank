@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { isBackupAssetFilename } from './backup-validation.js'
+import { isBackupAssetFilename, verifyBackupAssetBytes } from './backup-validation.js'
 import type { MusicBankDatabase } from './db.js'
 import type { BackupPayload } from './types.js'
 
@@ -15,7 +15,9 @@ export function restoreBackup(database: MusicBankDatabase, payload: BackupPayloa
     for (const item of payload.assets) {
       if (!isBackupAssetFilename(item.record.storedName)) throw new Error('备份文件包含无效的资源文件名')
       const folder = item.record.assetType === 'audio' ? 'audio' : 'images'
-      writeFileSync(join(stage, folder, item.record.storedName), Buffer.from(item.bytesBase64, 'base64'), { flag: 'wx' })
+      const bytes = Buffer.from(item.bytesBase64, 'base64')
+      verifyBackupAssetBytes(item.record, bytes)
+      writeFileSync(join(stage, folder, item.record.storedName), bytes, { flag: 'wx' })
     }
     for (const [folder, target] of [['audio', database.audioPath], ['images', database.imagePath]]) {
       const original = join(stage, `${folder}-original`)
