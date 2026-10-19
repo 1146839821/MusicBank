@@ -1,0 +1,84 @@
+{
+  "name": "musicbank",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "dev:electron": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "build:renderer": "vue-tsc --noEmit && vite build",
+    "build:electron": "tsc -p electron/tsconfig.json",
+    "build": "npm run build:renderer && npm run build:electron",
+    "test": "vitest run",
+    "start": "electron .",
+    "preview": "vite preview",
+    "dist": "npm run build && electron-builder"
+  },
+  "build": {
+    "appId": "com.musicbank.app",
+    "productName": "MusicBank",
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "extraResources": [
+      {
+        "from": "build/icons/musicbank.png",
+        "to": "musicbank.png"
+      }
+    ],
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "artifactName": "MusicBank-${version}-${arch}.${ext}",
+      "category": "public.app-category.education",
+      "icon": "build/icons/musicbank.icns"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "MusicBank-Setup-${version}-${arch}.${ext}",
+      "icon": "build/icons/musicbank.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "MusicBank",
+      "deleteAppDataOnUninstall": false,
+      "uninstallDisplayName": "MusicBank"
+    },
+    "asar": true,
+    "asarUnpack": ["node_modules/better-sqlite3/**"],
+    "npmRebuild": true
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "latest",
+    "pinia": "^4.1.0",
+    "typescript": "~5.8.3",
+    "vite": "latest",
+    "vue": "latest",
+    "vue-router": "^5.4.0",
+    "vue-tsc": "latest",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^26.6.5",
+    "better-sqlite3": "^13.0.3",
+    "concurrently": "^10.0.6",
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^6.0.0",
+    "vitest": "^5.0.5",
+    "wait-on": "^9.5.1"
+  }
+}
