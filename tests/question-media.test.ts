@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import Database from 'better-sqlite3'
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -33,6 +34,31 @@ describe('owned multi-file question media',()=>{
       db.saveQuestion({...question,attachments:attachments.filter(item=>item.id!=='image-1')})
       expect(db.listQuestions()[0].attachments).toHaveLength(3)
       expect(db.listPapers()[0].items[0].snapshot.attachments).toHaveLength(4)
+    }finally{db.close();rmSync(root,{recursive:true,force:true})}
+  })
+  it('protects snapshot assets after removing the original question and migrates older papers',()=>{
+    const root=mkdtempSync(join(tmpdir(),'musicbank-paper-media-'))
+    let db=new MusicBankDatabase(root)
+    try{
+      db.saveAsset(asset('image','image'))
+      const snapshot={...question,attachments:[{id:'image',assetType:'image' as const,name:'乐谱.png'}]}
+      db.saveQuestion(snapshot)
+      const paper={id:'protected',name:'固定试卷',grade:'六年级',totalScore:2,durationMinutes:40,items:[{position:1,questionId:question.id,score:2,snapshot}]}
+      db.savePaper(paper)
+      db.deleteQuestion(question.id)
+      const raw=new Database(db.databasePath)
+      raw.pragma('foreign_keys = ON')
+      expect(()=>raw.prepare('DELETE FROM assets WHERE id=?').run('image')).toThrow()
+      raw.prepare('DELETE FROM paper_asset_refs').run()
+      raw.prepare('DELETE FROM system_settings WHERE key=?').run('migration.paper-asset-references.v1')
+      raw.close();db.close();db=new MusicBankDatabase(root)
+      const migrated=new Database(db.databasePath)
+      try{expect(migrated.prepare('SELECT asset_id FROM paper_asset_refs WHERE paper_id=?').all('protected')).toEqual([{asset_id:'image'}])}finally{migrated.close()}
+      expect(()=>db.savePaper({...paper,items:[{...paper.items[0],snapshot:{...snapshot,attachments:[{id:'missing',assetType:'audio',name:'缺失.wav'}]}}]})).toThrow()
+      expect(db.listPapers()[0].items[0].snapshot.attachments).toEqual(snapshot.attachments)
+      db.savePaper({...paper,items:[{...paper.items[0],snapshot:{...snapshot,attachments:[]}}]})
+      const updated=new Database(db.databasePath)
+      try{expect(updated.prepare('SELECT COUNT(*) AS count FROM paper_asset_refs').get()).toEqual({count:0})}finally{updated.close()}
     }finally{db.close();rmSync(root,{recursive:true,force:true})}
   })
   it('serves image MIME, playable audio ranges, seek suffixes and missing-file errors',async()=>{

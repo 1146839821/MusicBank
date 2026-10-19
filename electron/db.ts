@@ -95,7 +95,22 @@ export class MusicBankDatabase {
         })()
       } finally { this.db.pragma('foreign_keys = ON') }
     }
+    this.backfillPaperAssetReferences()
     this.seedReferenceData()
+  }
+
+  private backfillPaperAssetReferences() {
+    const key = 'migration.paper-asset-references.v1'
+    if (this.db.prepare('SELECT 1 FROM system_settings WHERE key = ?').get(key)) return
+    this.db.transaction(() => {
+      const add = this.db.prepare('INSERT OR IGNORE INTO paper_asset_refs(paper_id, asset_id) SELECT ?, id FROM assets WHERE id = ?')
+      for (const paper of this.listPapers()) {
+        for (const item of paper.items) {
+          for (const attachment of questionAttachments(item.snapshot)) add.run(paper.id, attachment.id)
+        }
+      }
+      this.db.prepare('INSERT INTO system_settings(key, value_json) VALUES (?, ?)').run(key, 'true')
+    })()
   }
 
   private seedReferenceData() {
@@ -248,7 +263,12 @@ export class MusicBankDatabase {
       this.db.prepare('INSERT INTO papers(id,name,grade,total_score,duration_minutes,snapshot_json,created_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,grade=excluded.grade,total_score=excluded.total_score,duration_minutes=excluded.duration_minutes,snapshot_json=excluded.snapshot_json').run(paper.id, paper.name, paper.grade, paper.totalScore, paper.durationMinutes, JSON.stringify({ seed: paper.seed, items: paper.items, templateId: paper.templateId, templateSummary: paper.templateSummary, examInfo: paper.examInfo }), new Date().toISOString())
       this.db.prepare('DELETE FROM paper_items WHERE paper_id = ?').run(paper.id)
       const insert = this.db.prepare('INSERT INTO paper_items(paper_id,position,question_id,score,snapshot_json) VALUES (?,?,?,?,?)')
-      for (const item of paper.items) insert.run(paper.id, item.position, item.questionId, item.score, JSON.stringify(item.snapshot))
+      this.db.prepare('DELETE FROM paper_asset_refs WHERE paper_id = ?').run(paper.id)
+      const addAsset = this.db.prepare('INSERT OR IGNORE INTO paper_asset_refs(paper_id, asset_id) VALUES (?, ?)')
+      for (const item of paper.items) {
+        insert.run(paper.id, item.position, item.questionId, item.score, JSON.stringify(item.snapshot))
+        for (const attachment of questionAttachments(item.snapshot)) addAsset.run(paper.id, attachment.id)
+      }
     })
     tx()
     return paper.id
