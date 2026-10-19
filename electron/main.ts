@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { isBackupAssetFilename } from './backup-validation.js'
 import { MusicBankDatabase, createAssetRecord } from './db.js'
 import type { AssetRecord, BackupPayload, ExamAnswerRecord, ExamAttemptRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile } from './types.js'
 
@@ -75,7 +76,7 @@ app.whenReady().then(() => {
     if (payload.format !== 'musicbank-backup' || payload.version !== 1 || !Array.isArray(payload.questions) || !Array.isArray(payload.papers) || !Array.isArray(payload.assets)) throw new Error('备份文件格式不受支持')
     if (!Array.isArray(payload.wrongQuestionIds) || payload.assets.some((item) => {
       const record = item?.record
-      return !record || (record.assetType !== 'audio' && record.assetType !== 'image') || typeof record.storedName !== 'string' || typeof item.bytesBase64 !== 'string' || (item.bytesBase64.length % 4 !== 0) || !/^[A-Za-z0-9+/]*={0,2}$/.test(item.bytesBase64)
+      return !record || (record.assetType !== 'audio' && record.assetType !== 'image') || !isBackupAssetFilename(record.storedName) || typeof item.bytesBase64 !== 'string' || (item.bytesBase64.length % 4 !== 0) || !/^[A-Za-z0-9+/]*={0,2}$/.test(item.bytesBase64)
     })) throw new Error('备份文件包含无效的资源数据')
     database.clearAllData()
     for (const folder of [database.audioPath, database.imagePath]) {
