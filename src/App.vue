@@ -76,6 +76,8 @@ const practiceAudioElement = ref<HTMLAudioElement | null>(null)
 const audioAsset = reactive({ id: '', name: '', url: '', duration: '00:00', mime: '' })
 const imageAsset = ref('')
 const imageAssetId = ref('')
+let audioImportRevision = 0
+let imageImportRevision = 0
 const practiceIndex = ref(0)
 const studyMode = ref<'sequence' | 'special'>('sequence')
 const practiceAnswer = ref('')
@@ -238,6 +240,7 @@ async function exportNotationImage() {
     notify('请先在面板中加入至少一个谱面元素')
     return
   }
+  const revision = ++imageImportRevision
   const svgBlob = new Blob([notationSvg.value], { type: 'image/svg+xml;charset=utf-8' })
   const svgUrl = URL.createObjectURL(svgBlob)
   try {
@@ -256,8 +259,10 @@ async function exportNotationImage() {
     context.drawImage(image, 0, 0, canvas.width, canvas.height)
     const pngBlob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('PNG 导出失败')), 'image/png'))
     const bytes = await pngBlob.arrayBuffer()
+    if (revision !== imageImportRevision) return
     if (window.musicBank) {
       const imported = await window.musicBank.assets.import({ assetType: 'image', name: `MusicBank-谱面-${Date.now()}.png`, mimeType: 'image/png', bytes })
+      if (revision !== imageImportRevision) return
       if (imageAsset.value?.startsWith('blob:')) URL.revokeObjectURL(imageAsset.value)
       imageAssetId.value = imported.id
       imageAsset.value = imported.url
@@ -268,6 +273,7 @@ async function exportNotationImage() {
     showNotationPanel.value = false
     notify('谱面已生成图片并加入当前题目')
   } catch (error) {
+    if (revision !== imageImportRevision) return
     notify(error instanceof Error ? error.message : '谱面导出失败')
   } finally {
     URL.revokeObjectURL(svgUrl)
@@ -513,6 +519,8 @@ function notify(message: string) {
 }
 
 function resetForm() {
+  audioImportRevision += 1
+  imageImportRevision += 1
   form.grade = ''
   form.category = ''
   form.subcategory = ''
@@ -544,6 +552,8 @@ function resetForm() {
 }
 
 function editQuestion(question: Question) {
+  audioImportRevision += 1
+  imageImportRevision += 1
   currentSavedId.value = question.id
   form.grade = question.grade
   form.category = question.category
@@ -668,6 +678,7 @@ async function handleAudioChange(event: Event) {
     notify('音频文件不能超过 30MB')
     return
   }
+  const revision = ++audioImportRevision
   if (audioAsset.url?.startsWith('blob:')) URL.revokeObjectURL(audioAsset.url)
   const previewUrl = URL.createObjectURL(file)
   audioAsset.url = previewUrl
@@ -678,10 +689,12 @@ async function handleAudioChange(event: Event) {
   if (window.musicBank) {
     try {
       const imported = await window.musicBank.assets.import({ assetType: 'audio', name: file.name, mimeType: file.type || 'audio/mpeg', bytes: await file.arrayBuffer() })
+      if (revision !== audioImportRevision) return
       audioAsset.id = imported.id
       URL.revokeObjectURL(previewUrl)
       audioAsset.url = imported.url
     } catch {
+      if (revision !== audioImportRevision) return
       notify('音频预览成功，但保存到桌面资源库失败')
       return
     }
@@ -695,6 +708,7 @@ async function handleImageChange(event: Event) {
     notify('请选择 JPG、PNG 或 WEBP 图片')
     return
   }
+  const revision = ++imageImportRevision
   if (imageAsset.value?.startsWith('blob:')) URL.revokeObjectURL(imageAsset.value)
   const previewUrl = URL.createObjectURL(file)
   imageAsset.value = previewUrl
@@ -702,10 +716,12 @@ async function handleImageChange(event: Event) {
   if (window.musicBank) {
     try {
       const imported = await window.musicBank.assets.import({ assetType: 'image', name: file.name, mimeType: file.type || 'image/png', bytes: await file.arrayBuffer() })
+      if (revision !== imageImportRevision) return
       imageAssetId.value = imported.id
       URL.revokeObjectURL(previewUrl)
       imageAsset.value = imported.url
     } catch {
+      if (revision !== imageImportRevision) return
       notify('图片预览成功，但保存到桌面资源库失败')
       return
     }
@@ -719,6 +735,7 @@ function syncAudioDuration() {
   }
 }
 function removeAudio() {
+  audioImportRevision += 1
   audioElement.value?.pause()
   if (audioAsset.url.startsWith('blob:')) URL.revokeObjectURL(audioAsset.url)
   Object.assign(audioAsset, { id: '', name: '', url: '', duration: '00:00', mime: '' })
@@ -727,6 +744,7 @@ function removeAudio() {
 }
 
 function removeImage() {
+  imageImportRevision += 1
   if (imageAsset.value.startsWith('blob:')) URL.revokeObjectURL(imageAsset.value)
   imageAsset.value = ''
   imageAssetId.value = ''
