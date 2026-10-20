@@ -1,0 +1,57 @@
+# 图文网格与连线题实施审查
+
+## 实施前保护
+
+开发分支：codex/matching-image-grid，基于 b309190。
+本机应用数据已备份到用户 Documents/MusicBank Backups/pre-matching-20261020-233317；SQLite 完整性检查 ok。该原生数据目录现有题目、试卷、考试记录均为 0；浏览器开发数据与原生数据分开存储。不得重置数据库。
+
+## 实际代码审查
+
+|关键文件|当前机制|扩展风险及处理|
+|---|---|---|
+|src/components/PromptEditor.vue、src/prompt-content.ts|自定义 contenteditable，保存 text 与 bold/italic TextRun；不是 Tiptap，粘贴纯文本|保留已验证编辑器，增加结构化图文节点，不写任意 HTML 或绝对路径|
+|src/media-store.ts、electron/main.ts、QuestionMedia.vue|原生资源复制到应用数据目录，浏览器 IndexedDB；附件数组，多图片/audio controls，自定义协议支持音频范围请求|图文及连线图片必须纳入同一资源引用；避免再次作为独立附件重复显示|
+|NotationEditor.vue、src/notation/*|结构化乐谱源稿、SVG 转 PNG 后资源入库|保持独立编辑器，不替换或集成上游整个项目|
+|electron/types.ts、electron/db.ts|四题型，JSON 选项/附件/格式片段，SQLite CHECK 限制题型|增加连线题及 JSON 字段；事务重建 CHECK，保留所有列、索引及外键关系|
+|src/question-copy.ts、App.vue|深拷贝复制题目，录入及答题逻辑集中在 App|新字段必须贯穿打开、保存、复制、预览、筛选，避免遗漏|
+|electron/paper-plan.ts、src/quick-exam.ts|按题型参数及种子抽题，完整题目深拷贝快照|目标显示顺序在生成快照时确定并保存；正确关系始终使用 ID|
+|electron/db.ts|paper_items 快照、paper_asset_refs；已有考试时禁止覆盖试卷|扩展引用收集器保护网格与连线图片；新增引用回填版本|
+|electron/paper-documents.ts、ExamDocuments.vue|操作真实 Word XML，保留模板布局；docx-preview 后打印/PDF|使用 Word 表格和内嵌图片排版，不截图替代；预留连线空间，答案输出编号映射|
+|App.vue、exam-store.ts、ExamHistory.vue|字符串答卷，原生 SQLite/浏览器存储；客观自动评分、简答人工评分|匹配答卷以版本化 JSON 存储，统一验证和判分；所有入口使用共享逻辑|
+|create-backup.ts、restore-backup.ts、learning-backup.ts|包含资源、题目、试卷及学习记录；恢复前验证、暂存及回滚|新增结构校验并保留旧版备份兼容；错误结构不能覆盖数据|
+
+潜在问题：旧迁移 ALTER 捕获所有错误，不能作为新迁移范式；新增迁移应显式检查列。现有模板仅认识四题型，需兼容新增连线区域。现有资源导出按整行图片处理，需新增结构化表格排版。渲染器的资源类型/大小校验不能替代原生边界校验。
+
+## 数据设计
+
+- ImageGridBlock：稳定 id、columns(2/3/4)、imageHeight、fit(contain/cover)、gap、align、items(id/assetId/caption)。资源只保存 ID。
+- MatchingItem：id/contentType/text/assetId/order。
+- MatchingPair：sourceId/targetId。
+- MatchingData：version、sources、targets、pairs、scoring(per-pair/all-or-nothing)、targetOrder。展示乱序与答案关系分离。
+- 学生答案：版本化匹配关系 JSON，存入兼容现有 answer 字段；拒绝重复 source/target 和未知 ID。
+- 分值：以整数百分之一分分配，余数按标准项目顺序分配，保证全对等于满分且总分精确。
+
+## 分阶段实施及验证
+
+1. 类型、结构校验、共享匹配算法、整数评分及单元测试；向前迁移及旧数据保留测试。
+2. 图文网格组件：列数、显示方式、高度、间距、对齐、文字、替换/删除、多图、拖动及键盘排序；结构保存/恢复。
+3. 连线题教师录入：图片与名称、稳定 ID、一对一标准关系、评分规则、编辑及复制。
+4. MatchingQuestion：上图片下文字、SVG 线、选择/取消/重新连接/清空、键盘及窗口尺寸响应。
+5. 接入列表、预览、顺序/专项练习、随机组卷、考试、记录、错题及部分得分；未完成状态识别。
+6. 快照及资源保护、备份恢复验证，生成时保存展示顺序。
+7. Word 原生表格布局、答案编号映射，PDF/打印复用文档布局，模板兼容。
+8. 每个阶段运行类型检查、构建和相关测试；最终全量回归及浏览器操作验收、三平台构建检查。
+
+回归范围：原四题型、图片音频、四组连线保存重开、连接取消与乱序、部分正确计分、随机组卷、快照不变、Word/PDF、旧题编辑不丢数据、Windows/macOS 构建。任何未实际验证的项目在最终报告明确列出。
+
+## 实施结果（2026-10-21）
+
+已接入上述全部功能入口。新增 `electron/matching.ts` 和 `electron/image-grids.ts` 作为数据校验边界；新增 `AssetImage.vue`、`ImageGrids.vue`、`MatchingEditor.vue`、`MatchingQuestion.vue`。现有编辑器仍保存纯文本与格式片段，图文网格保存独立结构化块并随题干渲染，不存任意 HTML；不是 Tiptap 节点，也不支持任意段落之间插入网格。
+
+数据库迁移版本 2026102001：显式检查后添加 matching_json / image_grids_json；事务扩充题型 CHECK，复制全部旧列、恢复原索引并检查外键。历史试卷资源引用执行 v2 回填。备份格式仍为兼容的版本 1，新增结构在恢复覆盖前校验。历史试卷完整快照不随原题编辑/删除而改变。
+
+已执行：166 项测试、29 个测试文件全部通过；Vue/TypeScript 检查、Vite 与 Electron 构建通过；git diff --check 通过。测试覆盖旧题型、媒体、复制、迁移、学习历史、快照/资源约束、恢复、乱序、部分得分与整数精度、Word 原生图片表格和答案映射。
+
+浏览器验收：四张图片连线题保存重开；图文网格列数、文字和顺序恢复；真实 Word 预览保留网格和图片；鼠标连接/取消、键盘连接、切题保留；未完成提交提示；两组正确得 2/4 分且历史记录恢复两条连接。图片使用项目内 PNG 测试素材，名称使用四种乐器。另以文字项目独立复测完整判分流程。
+
+PDF 验收：从实际 docx-preview 排版 DOM 调用 Electron 原生 documentPdf，生成一页 A4 PDF，Poppler 渲染后检查项目对齐、文字和连线空白区，无裁切重叠。未实际连接实体打印机；Windows 安装/卸载人工操作不属于本机可验证范围。三平台 CI 打包及原生 SQLite 启动检查结果见后续构建记录。

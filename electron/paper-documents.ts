@@ -1,3 +1,5 @@
+import {matchingReference,validateMatching} from './matching.js'
+import {validateImageGrids} from './image-grids.js'
 import {formatFillAnswers} from './fill-answers.js'
 import { questionAttachments } from './question-assets.js'
 import JSZip from 'jszip'
@@ -6,7 +8,7 @@ import type { DocumentKind, PaperRecord, QuestionType, TemplateSummary, TextRun 
 
 const W='http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 const R='http://schemas.openxmlformats.org/package/2006/relationships'
-export const questionTypes: QuestionType[]=['选择题','填空题','判断题','简答题']
+export const questionTypes: QuestionType[]=['选择题','填空题','判断题','简答题','连线题']
 const xmlEscape=(value: string)=>value.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]!)).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g,'')
 function parse(xml:string) {
   if (/<!DOCTYPE|<!ENTITY/i.test(xml)) throw new Error('模板不能包含外部 XML 实体')
@@ -71,6 +73,7 @@ export async function inspectTemplate(bytes:Uint8Array):Promise<TemplateSummary>
   return {sectionOrder:marker.length?questionTypes:sections,mode:marker.length?'placeholder':'sections',pageWidth,pageHeight,warnings:doc.getElementsByTagNameNS(W,'txbxContent').length?['模板含浮动文本框，打印前请检查预览中的位置。']:[]}
 }
 export function answerText(question:PaperRecord['items'][number]['snapshot']){
+  if(question.type==='连线题'&&question.matching)return matchingReference(question.matching)
   if(question.type==='判断题')return question.correctAnswer==='true'?'正确（√）':question.correctAnswer==='false'?'错误（×）':'未设置答案'
   if(question.type==='选择题')return (question.correctAnswer||'未设置答案').replace(/,/g,'、')
   if(question.type==='填空题')return formatFillAnswers(question.fillAnswers)
@@ -88,7 +91,7 @@ export async function buildPaperDocument(bytes:Uint8Array,paper:PaperRecord,kind
   if(paper.items.some(item=>!Number.isFinite(item.score)||item.score<=0||!questionTypes.includes(item.snapshot.type)))throw new Error('试卷题型或分值无效')
   const actual=paper.items.reduce((sum,item)=>sum+item.score,0)
   if(Math.abs(actual-paper.totalScore)>.001)throw new Error('试卷总分与题目分值不一致')
-  for(const item of paper.items)if(!summary.sectionOrder.includes(item.snapshot.type))throw new Error(`所选模板没有“${item.snapshot.type}”区域，请更换模板`)
+  for(const item of paper.items)if(item.snapshot.type!=='连线题'&&!summary.sectionOrder.includes(item.snapshot.type))throw new Error(`所选模板没有“${item.snapshot.type}”区域，请更换模板`)
   // Word/WPS floating identity boxes are not portable to PDF engines. Keep their
   // content as an inline information row in both Word and the print preview.
   let normalizedIdentity=false
@@ -117,31 +120,57 @@ export async function buildPaperDocument(bytes:Uint8Array,paper:PaperRecord,kind
   let relDoc=parse(await zip.file('word/_rels/document.xml.rels')?.async('string')||`<Relationships xmlns="${R}"/>`)
   const contentTypes=parse(await zip.file('[Content_Types].xml')!.async('string'))
   let imageCounter=0
+  const pageWidth=Math.min((summary.pageWidth-55)/25.4*914400,4800000)
+  async function imageXml(assetId:string,maxWidth=pageWidth,maxHeight=4800000,fit='contain',align='center'){
+      if(!resolveImage)throw new Error('题目图片无法读取')
+      const image=await resolveImage(assetId)
+      if(!image.bytes.length||!Number.isFinite(image.width)||!Number.isFinite(image.height)||image.width<=0||image.height<=0)throw new Error('题目图片无效')
+      const id=`musicbankImage${++imageCounter}`,name=`musicbank-${imageCounter}.png`
+      zip.file(`word/media/${name}`,image.bytes)
+      const relation=relDoc.createElementNS(R,'Relationship');relation.setAttribute('Id',id);relation.setAttribute('Type','http://schemas.openxmlformats.org/officeDocument/2006/relationships/image');relation.setAttribute('Target',`media/${name}`);relDoc.documentElement!.appendChild(relation)
+      const naturalRatio=image.width/image.height,boxHeight=maxHeight||4800000,scale=Math.min(1,boxHeight/(maxWidth/naturalRatio)),cx=Math.round(maxWidth*scale),cy=Math.round(maxWidth/naturalRatio*scale)
+      const boxRatio=maxWidth/boxHeight,cropX=fit==='cover'&&naturalRatio>boxRatio?Math.round((1-boxRatio/naturalRatio)*50000):0,cropY=fit==='cover'&&naturalRatio<boxRatio?Math.round((1-naturalRatio/boxRatio)*50000):0
+      const finalWidth=fit==='cover'?Math.round(maxWidth):cx,finalHeight=fit==='cover'?Math.round(boxHeight):cy
+      return `<w:p><w:pPr><w:jc w:val="${align}"/><w:spacing w:before="80" w:after="80"/></w:pPr><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="${finalWidth}" cy="${finalHeight}"/><wp:docPr id="${10000+imageCounter}" name="题目图片 ${imageCounter}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="0" name="${name}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${id}"/><a:srcRect l="${cropX}" r="${cropX}" t="${cropY}" b="${cropY}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${finalWidth}" cy="${finalHeight}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`
+  }
+  function table(rows:string[][],columns:number,gap=12){
+    const width=Math.floor(pageWidth/635),cellWidth=Math.floor(width/columns),margin=Math.round(gap*15/2)
+    return `<w:tbl><w:tblPr><w:tblW w:w="${width}" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:tblCellMar><w:left w:w="${margin}" w:type="dxa"/><w:right w:w="${margin}" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>${Array.from({length:columns},()=>`<w:gridCol w:w="${cellWidth}"/>`).join('')}</w:tblGrid>${rows.map(row=>`<w:tr><w:trPr><w:cantSplit/></w:trPr>${Array.from({length:columns},(_,index)=>`<w:tc><w:tcPr><w:tcW w:w="${cellWidth}" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>${row[index]||paragraph('')}</w:tc>`).join('')}</w:tr>`).join('')}</w:tbl>`
+  }
+  async function gridsXml(q:PaperRecord['items'][number]['snapshot']){
+    let result=''
+    for(const grid of q.imageGrids||[]){const cells=[];for(const item of grid.items)cells.push(await imageXml(item.assetId,pageWidth/grid.columns-grid.gap*9525,grid.imageHeight*9525,grid.fit,grid.align==='start'?'left':grid.align==='end'?'right':'center')+paragraph(item.caption,{size:22}));const rows=[];for(let i=0;i<cells.length;i+=grid.columns)rows.push(cells.slice(i,i+grid.columns));result+=table(rows,grid.columns,grid.gap)}
+    return result
+  }
+  async function matchingXml(q:PaperRecord['items'][number]['snapshot']){
+    const data=validateMatching(q.matching!),sources=[...data.sources].sort((a,b)=>a.order-b.order),order=data.targetOrder||[...data.targets].sort((a,b)=>a.order-b.order).map(item=>item.id),columns=Math.min(4,sources.length)
+    const sourceCells=[],targetCells=[]
+    for(const [index,item] of sources.entries())sourceCells.push(paragraph(String(index+1),{bold:true})+(item.contentType==='image'?await imageXml(item.assetId!,pageWidth/columns-160000,1200000):paragraph(item.text)))
+    for(const [index,id] of order.entries()){const item=data.targets.find(item=>item.id===id)!;targetCells.push(paragraph(`${String.fromCharCode(65+index)}. ${item.contentType==='text'?item.text:''}`,{bold:true})+(item.contentType==='image'?await imageXml(item.assetId!,pageWidth/columns-160000,1200000):''))}
+    const rows:string[][]=[]
+    for(let index=0;index<sources.length;index+=columns)rows.push(sourceCells.slice(index,index+columns))
+    rows.push(Array.from({length:columns},()=>paragraph('\n\n',{space:0})))
+    for(let index=0;index<targetCells.length;index+=columns)rows.push(targetCells.slice(index,index+columns))
+    return table(rows,columns)+paragraph('请将上方项目与下方名称连线。',{size:20})
+  }
   async function questionXml(item:PaperRecord['items'][number]){
-    const q=item.snapshot,label=`${item.position}. `
+    const q=item.snapshot;validateImageGrids(q.imageGrids);if(q.type==='连线题')validateMatching(q.matching!);const label=`${item.position}. `
     if(kind==='answers')return paragraph(`${label}${answerText(q)}（${item.score} 分）`,{bold:true})+(q.explanation?paragraph(`解析：${q.explanation}`):'')
     const suffix=`${q.type==='选择题'&&q.answerMode==='multiple'?'（多选）':''}${q.type==='选择题'?'（　　）':''}（${item.score} 分）`
     const titleRuns=q.titleRuns?.map(run=>run.text).join('')===q.title?q.titleRuns:[{text:q.title}]
     let xml=paragraph(`${label}${q.title}${suffix}`,{keepNext:true,runs:[{text:label},...titleRuns!,{text:suffix}]})
     const images=questionAttachments(q).filter(item=>item.assetType==='image')
-    for(const attachment of images){
-      if(!resolveImage)throw new Error(`第 ${item.position} 题的图片无法读取`)
-      const image=await resolveImage(attachment.id)
-      if(!image.bytes.length||!Number.isFinite(image.width)||!Number.isFinite(image.height)||image.width<=0||image.height<=0)throw new Error('题目图片无效')
-      const id=`musicbankImage${++imageCounter}`,name=`musicbank-${imageCounter}.png`
-      zip.file(`word/media/${name}`,image.bytes)
-      const relation=relDoc.createElementNS(R,'Relationship');relation.setAttribute('Id',id);relation.setAttribute('Type','http://schemas.openxmlformats.org/officeDocument/2006/relationships/image');relation.setAttribute('Target',`media/${name}`);relDoc.documentElement!.appendChild(relation)
-      const width=Math.min((summary.pageWidth-55)/25.4*914400,4800000),height=width*image.height/image.width,scale=Math.min(1,4800000/height),cx=Math.round(width*scale),cy=Math.round(height*scale)
-      xml+=`<w:p><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${10000+imageCounter}" name="题目图片 ${imageCounter}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="0" name="${name}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${id}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`
-    }
-    if(!images.length&&q.hasImage)throw new Error(`第 ${item.position} 题缺少图片素材，请重新导入图片后再组卷`)
+    for(const attachment of images)xml+=await imageXml(attachment.id)
+    xml+=await gridsXml(q)
+    if(q.type==='连线题')xml+=await matchingXml(q)
+    if(!images.length&&q.hasImage&&!q.imageGrids?.some(grid=>grid.items.length)&&!q.matching)throw new Error(`第 ${item.position} 题缺少图片素材，请重新导入图片后再组卷`)
     const audio=questionAttachments(q).filter(item=>item.assetType==='audio')
     for(const [index,attachment] of audio.entries())xml+=paragraph(`【听音材料 ${item.position}-${index+1}：${attachment.name}，由监考教师统一播放】`,{size:20})
     if(q.hasAudio&&!audio.length)xml+=paragraph(`【听音材料 ${item.position}：${q.audioName||'音乐片段'}，由监考教师统一播放】`,{size:20})
     if(q.type==='选择题')xml+=paragraph((q.options||[]).map((option,i)=>`${String.fromCharCode(65+i)}. ${option}`).join('\n'))
     else if(q.type==='判断题')xml+=paragraph('判断：（　　）　正确请填 √，错误请填 ×。')
     else if(q.type==='简答题')xml+=paragraph('________________________________________________________________\n\n________________________________________________________________\n\n________________________________________________________________')
-    else xml+=paragraph('答：____________________________________________________________')
+    else if(q.type!=='连线题')xml+=paragraph('答：____________________________________________________________')
     return xml
   }
   const metadata=(kind==='paper'&&(normalizedIdentity||!text(body).includes('姓名'))?paragraph('班级：____________　姓名：____________　得分：____________',{size:24}):'')+paragraph(`${paper.grade}　${info?.subject||'音乐'}　考试时长 ${paper.durationMinutes} 分钟　满分 ${paper.totalScore} 分${info?.examDate?'　'+info.examDate:''}`,{size:20})+(info?.instructions?paragraph(info.instructions,{size:20}):'')
@@ -153,7 +182,7 @@ export async function buildPaperDocument(bytes:Uint8Array,paper:PaperRecord,kind
     let ordinal=0
     for(const type of summary.sectionOrder){
       const items=paper.items.filter(item=>item.snapshot.type===type);if(!items.length)continue
-      let xml=paragraph(`${['一','二','三','四'][ordinal++]}、${type}（共 ${items.length} 题，共 ${items.reduce((s,i)=>s+i.score,0)} 分）`,{bold:true,keepNext:true})
+      let xml=paragraph(`${['一','二','三','四','五'][ordinal++]}、${type}（共 ${items.length} 题，共 ${items.reduce((s,i)=>s+i.score,0)} 分）`,{bold:true,keepNext:true})
       for(const item of items)xml+=await questionXml(item)
       insertBefore(xml,first)
     }
@@ -168,13 +197,14 @@ export async function buildPaperDocument(bytes:Uint8Array,paper:PaperRecord,kind
       while(sibling&&sibling.localName!=='sectPr'&&!headings.includes(sibling as XmlNode)) {const next=sibling.nextSibling;body.removeChild(sibling);sibling=next}
       if(!items.length){body.removeChild(heading);continue}
       const sum=items.reduce((s,i)=>s+i.score,0),same=items.every(i=>i.score===items[0].score)
-      replaceText(heading,ownText(heading),`${['一','二','三','四'][ordinal++]}、${type}（共 ${items.length} 题，${same?'每题 '+items[0].score+' 分，':''}共 ${sum} 分）`)
+      replaceText(heading,ownText(heading),`${['一','二','三','四','五'][ordinal++]}、${type}（共 ${items.length} 题，${same?'每题 '+items[0].score+' 分，':''}共 ${sum} 分）`)
       const ppr=heading.getElementsByTagNameNS(W,'pPr')[0]
       if(ppr){let keep=ppr.getElementsByTagNameNS(W,'keepNext')[0];if(!keep){keep=doc.createElementNS(W,'w:keepNext');ppr.appendChild(keep)}keep.setAttribute('w:val','1')}
       let xml='';for(const item of items)xml+=await questionXml(item)
       insertBefore(xml,sibling as XmlNode|null)
     }
   }
+  if(summary.mode==='sections'&&!summary.sectionOrder.includes('连线题')){const items=paper.items.filter(item=>item.snapshot.type==='连线题');if(items.length){let xml=paragraph(`连线题（共 ${items.length} 题，共 ${items.reduce((sum,item)=>sum+item.score,0)} 分）`,{bold:true,keepNext:true});for(const item of items)xml+=await questionXml(item);insertBefore(xml,Array.from(body.childNodes).find(node=>node.localName==='sectPr') as XmlNode||null)}}
   if(imageCounter&&!Array.from(contentTypes.getElementsByTagName('Default')).some(n=>n.getAttribute('Extension')==='png')){const node=contentTypes.createElementNS('http://schemas.openxmlformats.org/package/2006/content-types','Default');node.setAttribute('Extension','png');node.setAttribute('ContentType','image/png');contentTypes.documentElement!.appendChild(node)}
   zip.file('word/document.xml',new XMLSerializer().serializeToString(doc))
   zip.file('word/_rels/document.xml.rels',new XMLSerializer().serializeToString(relDoc))

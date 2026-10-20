@@ -14,7 +14,7 @@ describe('template persistence and judgment migration',()=>{
   it('upgrades the old check constraint without losing references, practice or question data',()=>{
     const {root,db}=fresh();db.saveQuestion(q);db.upsertWrongQuestion(q.id);db.savePracticeRecord({questionId:q.id,answer:'A',result:'correct'});const path=db.databasePath;db.close()
     const raw=new Database(path);raw.pragma('foreign_keys=OFF');const schema=(raw.prepare("SELECT sql FROM sqlite_master WHERE name='questions'").get() as {sql:string}).sql
-    raw.exec(schema.replace('CREATE TABLE questions','CREATE TABLE questions_legacy').replace("'选择题','填空题','判断题','简答题'","'选择题','填空题','简答题'"));raw.exec('INSERT INTO questions_legacy SELECT * FROM questions; DROP TABLE questions; ALTER TABLE questions_legacy RENAME TO questions;');raw.close()
+    raw.exec(schema.replace(/^CREATE TABLE\s+(?:"questions"|questions)/i,'CREATE TABLE questions_legacy').replace(/CHECK\(type IN \([^)]*\)\)/,"CHECK(type IN ('选择题','填空题','简答题'))"));raw.exec('INSERT INTO questions_legacy SELECT * FROM questions; DROP TABLE questions; ALTER TABLE questions_legacy RENAME TO questions;');raw.close()
     const migrated=new MusicBankDatabase(root);expect(migrated.listQuestions()).toHaveLength(1);expect(migrated.listWrongQuestionIds()).toEqual(['q']);migrated.saveQuestion({...q,id:'judge',type:'判断题',correctAnswer:'false'});expect(migrated.listQuestions().find(q=>q.id==='judge')?.correctAnswer).toBe('false');migrated.close()
     const check=new Database(path);expect(check.pragma('foreign_key_check')).toEqual([]);expect((check.prepare('SELECT count(*) AS count FROM practice_records').get() as {count:number}).count).toBe(1);check.close()
   })

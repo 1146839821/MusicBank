@@ -1,8 +1,10 @@
+import {validateMatching,matchingScore,validateMatchingAnswer} from './matching.js'
+import {validateImageGrids} from './image-grids.js'
 import Database from 'better-sqlite3'
 import {candidateName} from './exam-identity.js'
 import {normalizeChoice} from './choice-options.js'
 import {validateLearningBackup} from './learning-backup.js'
-import { questionAttachments } from './question-assets.js'
+import { questionAssets } from './question-assets.js'
 import { musicCategories } from './music-categories.js'
 import {validateCategories} from './category-catalog.js'
 import { mkdirSync } from 'node:fs'
@@ -11,6 +13,8 @@ import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypt
 import type { BackupPayload, AssetRecord, ExamAnswerRecord, ExamAttemptRecord, ExamSessionRecord, PracticeHistoryRecord, WrongQuestionRecord, CategoryRecord, PaperRecord, PracticeRecord, QuestionRecord, UserProfile, PaperTemplateRecord } from './types.js'
 
 type QuestionRow = Omit<QuestionRecord, 'updated' | 'hasAudio' | 'hasImage' | 'options' | 'correctAnswer' | 'fillAnswers' | 'referenceAnswer' | 'audioName' | 'audioDuration' | 'audioAssetId' | 'imageAssetId'> & {
+  image_grids_json?:string
+  matching_json?:string
   updated_at: string
   choice_identity_json?: string
   options_json?: string
@@ -59,7 +63,7 @@ export class MusicBankDatabase {
       CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY AUTOINCREMENT, parent_id INTEGER REFERENCES categories(id), name TEXT NOT NULL, UNIQUE(parent_id, name));
       CREATE TABLE IF NOT EXISTS questions (
         id TEXT PRIMARY KEY, title TEXT NOT NULL, grade TEXT NOT NULL, category TEXT NOT NULL, subcategory TEXT,
-        type TEXT NOT NULL CHECK(type IN ('选择题','填空题','判断题','简答题')), status TEXT NOT NULL CHECK(status IN ('已发布','草稿')),
+        type TEXT NOT NULL CHECK(type IN ('选择题','填空题','判断题','简答题','连线题')), status TEXT NOT NULL CHECK(status IN ('已发布','草稿')),
         difficulty TEXT NOT NULL, source TEXT, options_json TEXT, correct_answer TEXT, fill_answers_json TEXT,
         reference_answer TEXT, explanation TEXT, audio_name TEXT, audio_duration TEXT, audio_asset_id TEXT, answer_mode TEXT,
         image_asset_id TEXT, notation_json TEXT, has_audio INTEGER NOT NULL DEFAULT 0, has_image INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -100,6 +104,26 @@ export class MusicBankDatabase {
         })()
       } finally { this.db.pragma('foreign_keys = ON') }
     }
+    // Forward-only migration: retain every existing column and all dependent records.
+    for(const column of ['matching_json','image_grids_json']){
+      const columns=this.db.pragma('table_info(questions)') as {name:string}[]
+      if(!columns.some(item=>item.name===column))this.db.exec(`ALTER TABLE questions ADD COLUMN ${column} TEXT`)
+    }
+    const matchingSchema=(this.db.prepare("SELECT sql FROM sqlite_master WHERE name='questions'").get() as {sql:string}).sql
+    if(!matchingSchema.includes("'连线题'")){
+      this.db.pragma('foreign_keys = OFF')
+      try{this.db.transaction(()=>{
+        const indexes=this.db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='questions' AND sql IS NOT NULL").all() as {sql:string}[]
+        const expanded=matchingSchema.replace(/CHECK\s*\(\s*type\s+IN\s*\(([^)]*)\)\s*\)/i,(_,types:string)=>`CHECK(type IN (${types},'连线题'))`)
+        if(expanded===matchingSchema)throw new Error('无法安全升级题型约束')
+        this.db.exec(expanded.replace(/^CREATE TABLE\s+(?:"questions"|questions)/i,'CREATE TABLE questions_matching'))
+        this.db.exec('INSERT INTO questions_matching SELECT * FROM questions; DROP TABLE questions; ALTER TABLE questions_matching RENAME TO questions;')
+        for(const index of indexes)this.db.exec(index.sql)
+        if((this.db.pragma('foreign_key_check') as unknown[]).length)throw new Error('连线题迁移外键检查失败')
+        this.db.prepare('INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES (?,?)').run(2026102001,new Date().toISOString())
+      })()}finally{this.db.pragma('foreign_keys = ON')}
+    }
+    this.db.prepare('INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES (?,?)').run(2026102001,new Date().toISOString())
     this.initializeQuestionSequence()
     this.backfillPaperAssetReferences()
     this.seedReferenceData()
@@ -131,13 +155,13 @@ export class MusicBankDatabase {
   }
 
   private backfillPaperAssetReferences() {
-    const key = 'migration.paper-asset-references.v1'
+    const key = 'migration.paper-asset-references.v2'
     if (this.db.prepare('SELECT 1 FROM system_settings WHERE key = ?').get(key)) return
     this.db.transaction(() => {
       const add = this.db.prepare('INSERT OR IGNORE INTO paper_asset_refs(paper_id, asset_id) SELECT ?, id FROM assets WHERE id = ?')
       for (const paper of this.listPapers()) {
         for (const item of paper.items) {
-          for (const attachment of questionAttachments(item.snapshot)) add.run(paper.id, attachment.id)
+          for (const attachment of questionAssets(item.snapshot)) add.run(paper.id, attachment.id)
         }
       }
       this.db.prepare('INSERT INTO system_settings(key, value_json) VALUES (?, ?)').run(key, 'true')
@@ -261,6 +285,8 @@ export class MusicBankDatabase {
     return rows.map((row) => normalizeChoice({
       id: row.id,
       title: row.title,
+      matching:row.matching_json?JSON.parse(row.matching_json):undefined,
+      imageGrids:row.image_grids_json?JSON.parse(row.image_grids_json):undefined,
       attachments: row.attachments_json ? JSON.parse(row.attachments_json) : undefined,
       titleRuns: row.title_runs_json ? JSON.parse(row.title_runs_json) : undefined,
       grade: row.grade,
@@ -290,14 +316,18 @@ export class MusicBankDatabase {
 
   saveQuestion(question: QuestionRecord) {
     question=normalizeChoice(question)
+    validateImageGrids(question.imageGrids)
+    if(question.type==='连线题')validateMatching(question.matching!)
     if (question.type === '判断题' && !['true','false'].includes(question.correctAnswer || '')) throw new Error('判断题必须选择正确或错误作为标准答案')
     const now = new Date().toISOString()
     const tx = this.db.transaction(() => {
       this.ensureQuestionCategories(question)
-      this.db.prepare(`INSERT INTO questions (id,title,attachments_json,title_runs_json,grade,category,subcategory,type,status,difficulty,source,options_json,choice_identity_json,correct_answer,answer_mode,fill_answers_json,reference_answer,explanation,audio_name,audio_duration,audio_asset_id,image_asset_id,notation_json,has_audio,has_image,created_at,updated_at)
-        VALUES (@id,@title,@attachments_json,@title_runs_json,@grade,@category,@subcategory,@type,@status,@difficulty,@source,@options_json,@choice_identity_json,@correct_answer,@answer_mode,@fill_answers_json,@reference_answer,@explanation,@audio_name,@audio_duration,@audio_asset_id,@image_asset_id,@notation_json,@has_audio,@has_image,COALESCE((SELECT created_at FROM questions WHERE id=@id),@now),@now)
-        ON CONFLICT(id) DO UPDATE SET title=excluded.title,attachments_json=excluded.attachments_json,title_runs_json=excluded.title_runs_json,grade=excluded.grade,category=excluded.category,subcategory=excluded.subcategory,type=excluded.type,status=excluded.status,difficulty=excluded.difficulty,source=excluded.source,options_json=excluded.options_json,choice_identity_json=excluded.choice_identity_json,correct_answer=excluded.correct_answer,answer_mode=excluded.answer_mode,fill_answers_json=excluded.fill_answers_json,reference_answer=excluded.reference_answer,explanation=excluded.explanation,audio_name=excluded.audio_name,audio_duration=excluded.audio_duration,audio_asset_id=excluded.audio_asset_id,image_asset_id=excluded.image_asset_id,notation_json=excluded.notation_json,has_audio=excluded.has_audio,has_image=excluded.has_image,updated_at=excluded.updated_at`).run({
+      this.db.prepare(`INSERT INTO questions (id,matching_json,image_grids_json,title,attachments_json,title_runs_json,grade,category,subcategory,type,status,difficulty,source,options_json,choice_identity_json,correct_answer,answer_mode,fill_answers_json,reference_answer,explanation,audio_name,audio_duration,audio_asset_id,image_asset_id,notation_json,has_audio,has_image,created_at,updated_at)
+        VALUES (@id,@matching_json,@image_grids_json,@title,@attachments_json,@title_runs_json,@grade,@category,@subcategory,@type,@status,@difficulty,@source,@options_json,@choice_identity_json,@correct_answer,@answer_mode,@fill_answers_json,@reference_answer,@explanation,@audio_name,@audio_duration,@audio_asset_id,@image_asset_id,@notation_json,@has_audio,@has_image,COALESCE((SELECT created_at FROM questions WHERE id=@id),@now),@now)
+        ON CONFLICT(id) DO UPDATE SET matching_json=excluded.matching_json,image_grids_json=excluded.image_grids_json,title=excluded.title,attachments_json=excluded.attachments_json,title_runs_json=excluded.title_runs_json,grade=excluded.grade,category=excluded.category,subcategory=excluded.subcategory,type=excluded.type,status=excluded.status,difficulty=excluded.difficulty,source=excluded.source,options_json=excluded.options_json,choice_identity_json=excluded.choice_identity_json,correct_answer=excluded.correct_answer,answer_mode=excluded.answer_mode,fill_answers_json=excluded.fill_answers_json,reference_answer=excluded.reference_answer,explanation=excluded.explanation,audio_name=excluded.audio_name,audio_duration=excluded.audio_duration,audio_asset_id=excluded.audio_asset_id,image_asset_id=excluded.image_asset_id,notation_json=excluded.notation_json,has_audio=excluded.has_audio,has_image=excluded.has_image,updated_at=excluded.updated_at`).run({
         ...question,
+        matching_json:question.matching?JSON.stringify(question.matching):null,
+        image_grids_json:question.imageGrids?JSON.stringify(question.imageGrids):null,
         attachments_json: question.attachments ? JSON.stringify(question.attachments) : null,
         title_runs_json: question.titleRuns ? JSON.stringify(question.titleRuns) : null,
         subcategory: question.subcategory || null,
@@ -320,7 +350,7 @@ export class MusicBankDatabase {
       })
       this.db.prepare('DELETE FROM question_asset_refs WHERE question_id = ?').run(question.id)
       const addRef = this.db.prepare('INSERT OR IGNORE INTO question_asset_refs(question_id, asset_id, role) VALUES (?, ?, ?)')
-      for (const item of questionAttachments(question)) addRef.run(question.id, item.id, item.assetType === 'audio' ? 'question-audio' : 'question-image')
+      for (const item of questionAssets(question)) addRef.run(question.id, item.id, item.assetType === 'audio' ? 'question-audio' : 'question-image')
       this.advanceQuestionSequence(question.id)
     })
     tx()
@@ -332,6 +362,7 @@ export class MusicBankDatabase {
   }
 
   savePaper(paper: PaperRecord) {
+    for(const item of paper.items){validateImageGrids(item.snapshot.imageGrids);if(item.snapshot.type==='连线题')validateMatching(item.snapshot.matching!)}
     paper={...paper,items:paper.items.map(item=>({...item,snapshot:normalizeChoice(item.snapshot)}))}
     if (this.db.prepare('SELECT 1 FROM exam_attempts WHERE paper_id=? LIMIT 1').get(paper.id)) {
       const previous=this.listPapers().find(item=>item.id===paper.id)
@@ -348,7 +379,7 @@ export class MusicBankDatabase {
       for (const item of paper.items) {
         insert.run(paper.id, item.position, item.questionId, item.score, JSON.stringify(item.snapshot))
         this.advanceQuestionSequence(item.questionId)
-        for (const attachment of questionAttachments(item.snapshot)) addAsset.run(paper.id, attachment.id)
+        for (const attachment of questionAssets(item.snapshot)) addAsset.run(paper.id, attachment.id)
       }
     })
     tx()
@@ -440,7 +471,14 @@ export class MusicBankDatabase {
       const existing=this.listExamSessions().find(session=>session.attempt.id===attempt.id)
       if (!existing || existing.attempt.status!=='进行中') throw new Error('考试不存在或已经交卷')
       if (answers.length!==existing.paper.items.length || answers.some((answer,index)=>answer.attemptId!==attempt.id || answer.position!==index+1)) throw new Error('答卷不完整')
-      for (const answer of answers) this.saveExamAnswer(answer)
+      for (let answer of answers){
+        const item=existing.paper.items.find(item=>item.position===answer.position)!
+        if(item.snapshot.type==='连线题'&&item.snapshot.matching){
+          answer={...answer,score:matchingScore(answer.answer,item.snapshot.matching,item.score),reviewStatus:'已评分'}
+          if(answer.score!==undefined&&answer.score<item.score&&this.db.prepare('SELECT 1 FROM questions WHERE id=?').get(item.questionId))this.upsertWrongQuestion(item.questionId)
+        }
+        this.saveExamAnswer(answer)
+      }
       return this.saveExamAttempt({...existing.attempt,status:'已交卷',submittedAt:new Date().toISOString(),remainingSeconds:attempt.remainingSeconds})
     })()
   }
@@ -470,6 +508,9 @@ export class MusicBankDatabase {
   saveExamAnswer(answer: ExamAnswerRecord) {
     const attempt=this.db.prepare('SELECT status FROM exam_attempts WHERE id=?').get(answer.attemptId) as {status:string}|undefined
     if (!attempt || attempt.status!=='进行中') throw new Error('已交卷或不存在的考试不可作答')
+    const item=this.listPapers().find(paper=>paper.id===(this.db.prepare('SELECT paper_id FROM exam_attempts WHERE id=?').get(answer.attemptId) as {paper_id:string}).paper_id)?.items.find(item=>item.position===answer.position)
+    if(!item)throw new Error('答卷题号无效')
+    if(item.snapshot.type==='连线题'&&item.snapshot.matching)validateMatchingAnswer(answer.answer,item.snapshot.matching)
     this.db.prepare(`INSERT INTO exam_answers(attempt_id,position,answer_json,score,review_status,comment)
       VALUES (?,?,?,?,?,?)
       ON CONFLICT(attempt_id,position) DO UPDATE SET answer_json=excluded.answer_json,score=excluded.score,review_status=excluded.review_status,comment=excluded.comment`)
