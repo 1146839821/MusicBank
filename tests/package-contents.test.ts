@@ -10,7 +10,7 @@ it('checks all three bundle locations and rejects shipped user data or missing t
   const source = join(root, 'source')
   const script = resolve('scripts/verify-package.mjs')
   try {
-    for (const file of ['dist/index.html','dist-electron/main.js','dist-electron/preload.cjs','dist/templates/试卷模板.docx']) {
+    for (const file of ['dist/index.html','dist-electron/main.js','dist-electron/preload.cjs','dist/templates/试卷模板.docx','node_modules/better-sqlite3/package.json','node_modules/better-sqlite3/lib/index.js']) {
       const target = join(source, file)
       mkdirSync(resolve(target, '..'), { recursive: true })
       writeFileSync(target, 'fixture')
@@ -25,7 +25,17 @@ it('checks all three bundle locations and rejects shipped user data or missing t
       writeFileSync(join(resources, 'musicbank.png'), 'icon')
       await createPackage(source, join(resources, 'app.asar'))
       const run = () => spawnSync(process.execPath, [script, platform, arch], { cwd: root, encoding: 'utf8' })
+      const nativeBinary = join(resources, `app.asar.unpacked/node_modules/better-sqlite3/prebuilds/${platform === 'mac' ? 'darwin' : 'win32'}-${arch}.node`)
+      mkdirSync(resolve(nativeBinary, '..'), { recursive: true })
+      writeFileSync(nativeBinary, 'native fixture')
       expect(run().status).toBe(0)
+      rmSync(nativeBinary)
+      expect(run().stderr).toContain('Missing unpacked SQLite native binary')
+      writeFileSync(nativeBinary, 'native fixture')
+      rmSync(join(source, 'node_modules/better-sqlite3/package.json'))
+      await createPackage(source, join(resources, 'app.asar'))
+      expect(run().stderr).toContain('Missing runtime dependency')
+      writeFileSync(join(source, 'node_modules/better-sqlite3/package.json'), 'fixture')
       writeFileSync(join(source, 'musicbank.sqlite'), 'private data')
       await createPackage(source, join(resources, 'app.asar'))
       expect(run().stderr).toContain('User data must not ship')

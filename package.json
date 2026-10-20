@@ -65,6 +65,7 @@
   "dependencies": {
     "@vitejs/plugin-vue": "latest",
     "@xmldom/xmldom": "^0.9.12",
+    "better-sqlite3": "^13.0.3",
     "docx-preview": "^0.4.1",
     "jszip": "^3.10.2",
     "pinia": "^4.1.0",
@@ -79,7 +80,6 @@
     "@electron/asar": "3.4.1",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^26.6.5",
-    "better-sqlite3": "^13.0.3",
     "concurrently": "^10.0.6",
     "electron": "^44.9.0",
     "electron-builder": "^26.15.3",
