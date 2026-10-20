@@ -10,7 +10,7 @@ function fixture(){
   const root=mkdtempSync(join(tmpdir(),'musicbank-exams-'));roots.push(root)
   const db=new MusicBankDatabase(root)
   const question={id:'q',title:'简述旋律',grade:'六年级',category:'音乐要素',type:'简答题' as const,status:'已发布' as const,hasAudio:false,hasImage:false,updated:'刚刚',difficulty:'基础',referenceAnswer:'参考内容'}
-  const paper:PaperRecord={id:'p',name:'音乐测试',grade:'六年级',totalScore:10,durationMinutes:10,items:[{position:1,questionId:'q',score:10,snapshot:question}]}
+  const paper:PaperRecord={id:'p',name:'音乐测试',grade:'六年级',totalScore:10,durationMinutes:10,seed:'2026-秋-A',templateId:'template-1',templateSummary:{sectionOrder:['简答题'],mode:'sections',pageWidth:210,pageHeight:297,warnings:[]},examInfo:{school:'实验小学',schoolYear:'2026—2027学年',term:'第一学期',subject:'音乐',examDate:'2026-10-20',instructions:'请独立完成作答。'},items:[{position:1,questionId:'q',score:10,snapshot:question}]}
   db.savePaper(paper)
   const attempt:ExamAttemptRecord={id:'a',paperId:'p',status:'进行中',startedAt:'2026-10-20T00:00:00Z',remainingSeconds:600}
   db.saveExamAttempt(attempt)
@@ -18,7 +18,7 @@ function fixture(){
 }
 describe('recoverable exam sessions',()=>{
   it('recovers the exact answer, remaining time and paper after restart',()=>{
-    const {root,db,attempt}=fixture()
+    const {root,db,attempt,paper}=fixture()
     db.saveExamAnswer({attemptId:'a',position:1,answer:'旋律由音高组织',reviewStatus:'待批阅'})
     expect(()=>db.saveExamAttempt({...attempt,paperId:'other'})).toThrow('身份')
     db.saveExamAttempt({...attempt,remainingSeconds:483});db.close()
@@ -27,6 +27,7 @@ describe('recoverable exam sessions',()=>{
     expect(session.attempt.remainingSeconds).toBe(483)
     expect(session.answers[0].answer).toBe('旋律由音高组织')
     expect(session.paper.items[0].snapshot.referenceAnswer).toBe('参考内容')
+    expect(session.paper).toEqual(paper)
     reopened.close()
   })
   it('rolls back incomplete submission and saves a complete answer sheet atomically',()=>{

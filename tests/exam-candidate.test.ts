@@ -6,7 +6,7 @@ import {MusicBankDatabase} from '../electron/db'
 import {createBackup} from '../electron/create-backup'
 import {restoreBackup} from '../electron/restore-backup'
 import {candidateName} from '../electron/exam-identity'
-import {saveExamProgress,finishExam,listExamSessions} from '../src/exam-store'
+import {saveExamProgress,saveExamResponse,finishExam,listExamSessions} from '../src/exam-store'
 import type {ExamAttemptRecord,PaperRecord} from '../electron/types'
 const roots:string[]=[]
 afterEach(()=>{vi.unstubAllGlobals();for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true})})
@@ -46,5 +46,17 @@ describe('optional exam candidate identity',()=>{
   await expect(saveExamProgress(attempt('小红'),paper)).rejects.toThrow('身份')
   await finishExam({...attempt('小红'),status:'已交卷',submittedAt:'2026-10-20T01:05:00Z'},[])
   expect((await listExamSessions())[0].attempt).toMatchObject({candidateName:'小明',status:'已交卷'})
+ })
+ it('preserves full paper metadata through browser progress, resume and submission',async()=>{
+  const values=new Map<string,string>();vi.stubGlobal('window',{});vi.stubGlobal('localStorage',{getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value)})
+  const original:PaperRecord={...paper,seed:'2026-秋-A',templateId:'original-template',templateSummary:{sectionOrder:['简答题'],mode:'sections',pageWidth:210,pageHeight:297,warnings:[]},examInfo:{school:'实验小学',schoolYear:'2026—2027学年',term:'第一学期',subject:'音乐',examDate:'2026-10-20',instructions:'独立作答'}}
+  await saveExamProgress(attempt(),original)
+  await saveExamResponse({attemptId:'attempt',position:1,answer:'一拍'})
+  const [resumed]=await listExamSessions()
+  expect(resumed.paper).toEqual(original)
+  resumed.paper.examInfo!.school='被其他页面修改'
+  await saveExamProgress({...attempt(),remainingSeconds:500},resumed.paper)
+  await finishExam({...attempt(),submittedAt:'2026-10-20T01:05:00Z'},[{attemptId:'attempt',position:1,answer:'一拍',reviewStatus:'待批阅'}])
+  expect((await listExamSessions())[0].paper).toEqual(original)
  })
 })

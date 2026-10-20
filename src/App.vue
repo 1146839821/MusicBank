@@ -57,7 +57,7 @@ interface Question {
   notationDocument?: string
 }
 interface PaperItem { question: Question; score: number }
-interface SavedPaper { id: string; name: string; grade: string; totalScore: number; durationMinutes: number; seed?: string; items: Array<{ position: number; questionId: string; score: number; snapshot: Question }> }
+type SavedPaper = PaperRecord
 interface UserProfile { username: string; nickname: string; userCode: string }
 
 const hasDemoData = import.meta.env.DEV || import.meta.env.VITE_DEMO_DATA === 'true'
@@ -120,6 +120,7 @@ const practiceResult = ref<'correct' | 'wrong' | 'pending' | null>(null)
 const paperConfig = reactive({ name: '六年级音乐阶段模拟卷', grade: '六年级', totalScore: 100, duration: 40, seed: '' })
 const generatedPaper = ref<PaperItem[]>([])
 const activePaperId = ref<string | null>(null)
+const activePaperSnapshot = ref<PaperRecord | null>(null)
 const savedPapers = ref<SavedPaper[]>([])
 const backupBusy = ref(false)
 const dataRootPath = ref('桌面版应用数据目录')
@@ -733,7 +734,8 @@ function currentAttempt():ExamAttemptRecord|null {
   return activeExamAttemptId.value&&activePaperId.value ? {id:activeExamAttemptId.value,paperId:activePaperId.value,status:examSubmitted.value?'已交卷':'进行中',startedAt:examStartedAt.value!,candidateName:examCandidateName.value||undefined,remainingSeconds:Math.max(0,examRemaining.value)} : null
 }
 function currentExamPaper():PaperRecord {
-  return {id:activePaperId.value!,name:paperConfig.name,grade:paperConfig.grade,totalScore:generatedPaper.value.reduce((sum,item)=>sum+item.score,0),durationMinutes:paperConfig.duration,items:generatedPaper.value.map((item,index)=>({position:index+1,questionId:item.question.id,score:item.score,snapshot:JSON.parse(JSON.stringify(item.question))}))}
+  if (!activePaperSnapshot.value || activePaperSnapshot.value.id !== activePaperId.value) throw new Error('考试试卷尚未载入，请重新选择试卷')
+  return JSON.parse(JSON.stringify(activePaperSnapshot.value))
 }
 async function checkpointExam() {
   const attempt=currentAttempt()
@@ -761,6 +763,7 @@ async function startExam(confirmed=false) {
     generatedPaper.value = paper.items.map(item => ({question: item.snapshot, score: item.score}))
     Object.assign(paperConfig, {name: paper.name, grade: paper.grade, totalScore: paper.totalScore, duration: paper.durationMinutes, seed: ''})
     activePaperId.value=null
+    activePaperSnapshot.value=null
   }
   if(!generatedPaper.value.length)return
   if(!confirmed&&!(activeExamAttemptId.value&&!examSubmitted.value&&examAttemptPaperId===activePaperId.value)){showExamSetup.value=true;return}
@@ -882,10 +885,12 @@ watch([practiceGrade, practiceCategory, practiceAudioOnly], () => {
   resetPractice()
 }, { flush: 'sync' })
 
-function clearPaper() { generatedPaper.value=[];activePaperId.value=null;paperError.value='' }
+function clearPaper() { generatedPaper.value=[];activePaperId.value=null;activePaperSnapshot.value=null;paperError.value='' }
 
 function openSavedPaper(paper: SavedPaper) {
   stopExamTimer()
+  paper = JSON.parse(JSON.stringify(paper)) as PaperRecord
+  activePaperSnapshot.value = paper
   activeExamAttemptId.value=null
   examCandidateName.value='';showExamSetup.value=false
   activePaperId.value = paper.id
@@ -911,6 +916,7 @@ async function persistCurrentPaper() {
   if (window.musicBank) await window.musicBank.papers.save(JSON.parse(JSON.stringify(paper)))
   else window.localStorage.setItem(`musicbank.paper.${paper.id}`, JSON.stringify(paper))
   activePaperId.value = paper.id
+  activePaperSnapshot.value = JSON.parse(JSON.stringify(paper))
   if (window.musicBank) savedPapers.value = await window.musicBank.papers.list() as SavedPaper[]
   else savedPapers.value = [paper as SavedPaper, ...savedPapers.value.filter((item) => item.id !== paper.id)]
   return paper.id
