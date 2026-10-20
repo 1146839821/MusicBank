@@ -55,3 +55,19 @@
 浏览器验收：四张图片连线题保存重开；图文网格列数、文字和顺序恢复；真实 Word 预览保留网格和图片；鼠标连接/取消、键盘连接、切题保留；未完成提交提示；两组正确得 2/4 分且历史记录恢复两条连接。图片使用项目内 PNG 测试素材，名称使用四种乐器。另以文字项目独立复测完整判分流程。
 
 PDF 验收：从实际 docx-preview 排版 DOM 调用 Electron 原生 documentPdf，生成一页 A4 PDF，Poppler 渲染后检查项目对齐、文字和连线空白区，无裁切重叠。未实际连接实体打印机；Windows 安装/卸载人工操作不属于本机可验证范围。三平台 CI 打包及原生 SQLite 启动检查结果见后续构建记录。
+
+### 最终跨平台构建记录
+
+实现提交：883378c。GitHub Actions 运行 39456822610，macOS Intel、macOS Apple silicon、Windows x64 三个任务均成功，包括全量测试、TypeScript/构建、打包、安装包内容校验和原生 SQLite 读写冒烟检查。Windows 产物为支持卸载的 NSIS 安装程序。此轮未发布正式 GitHub Release，也未执行实体打印或 Windows 安装/卸载人工验收。浏览器 1120×820 最小桌面窗口检查通过。
+
+完整修改文件：
+- electron/types.ts、matching.ts、image-grids.ts、question-assets.ts：类型、验证、共享计分、资源收集。
+- electron/db.ts、learning-backup.ts：向前迁移、保存恢复、快照引用、原生判分。
+- electron/paper-plan.ts、paper-documents.ts：题量参数、乱序快照、Word 表格图片及答案。
+- src/App.vue、exam-store.ts、quick-exam.ts：录入、预览、筛选、练习、考试、提交及持久化。
+- src/components/AssetImage.vue、ImageGrids.vue、MatchingEditor.vue、MatchingQuestion.vue：新组件。
+- src/components/ExamHistory.vue、PaperWorkspace.vue：记录回看和组卷配置。
+- tests/matching.test.ts、matching-persistence.test.ts、question-media.test.ts、template-storage.test.ts：新功能及兼容回归。
+- docs/matching-image-grid-plan.md：审查、实施计划和验收记录。
+
+待人工确认项：真实乐器教学素材的内容校对、实体打印效果、Windows 安装/卸载操作。功能范围说明：第一版提供上方图片/文字、下方名称的一对一匹配；图文网格是题干后的结构化块，未更换原编辑器，也不支持任意文本段落间的自由嵌套。
