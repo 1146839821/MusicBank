@@ -2,7 +2,7 @@ import {describe, expect, it} from 'vitest'
 import {mkdtempSync, rmSync} from 'node:fs'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
-import {parseFillAnswers, fillAnswersCorrect, formatFillAnswers} from '../electron/fill-answers'
+import {parseFillAnswers, fillAnswersCorrect, formatFillAnswers, formatFillResponse} from '../electron/fill-answers'
 import {answerText} from '../electron/paper-documents'
 import {MusicBankDatabase} from '../electron/db'
 import {createBackup} from '../electron/create-backup'
@@ -45,5 +45,19 @@ describe('ordered fill-in blanks with explicit alternatives', () => {
       restoreBackup(target, JSON.parse(JSON.stringify(createBackup(db))))
       expect(target.listQuestions()[0].fillAnswers).toEqual(question.fillAnswers)
     } finally { db.close(); target.close(); rmSync(root,{recursive:true,force:true}); rmSync(restored,{recursive:true,force:true}) }
+  })
+})
+
+
+describe('historical fill response display', () => {
+  it('labels every blank and preserves skipped positions', () => {
+    expect(formatFillResponse('\n一拍', 2)).toBe('第1空：未作答；第2空：一拍')
+    expect(formatFillResponse('♩\n', 2)).toBe('第1空：♩；第2空：未作答')
+    expect(formatFillResponse(undefined, 2)).toBe('第1空：未作答；第2空：未作答')
+  })
+  it('displays complete, legacy and CRLF answers without interpreting student text as alternatives', () => {
+    expect(formatFillResponse(' 四分音符 \r\n 1拍 ', 2)).toBe('第1空：四分音符；第2空：1拍')
+    expect(formatFillResponse('♩ | ♪', 1)).toBe('第1空：♩ | ♪')
+    expect(formatFillResponse('一拍\n旧答案', 1)).toBe('第1空：一拍；第2空：旧答案')
   })
 })
