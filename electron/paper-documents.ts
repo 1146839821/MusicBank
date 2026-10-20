@@ -1,10 +1,11 @@
 import {matchingReference,validateMatching} from './matching.js'
 import {validateImageGrids} from './image-grids.js'
+import {promptLayout} from './prompt-layout.js'
 import {formatFillAnswers} from './fill-answers.js'
 import { questionAttachments } from './question-assets.js'
 import JSZip from 'jszip'
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom'
-import type { DocumentKind, PaperRecord, QuestionType, TemplateSummary, TextRun } from './types.js'
+import type { DocumentKind, ImageGridBlock, PaperRecord, QuestionType, TemplateSummary, TextRun } from './types.js'
 
 const W='http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 const R='http://schemas.openxmlformats.org/package/2006/relationships'
@@ -79,10 +80,10 @@ export function answerText(question:PaperRecord['items'][number]['snapshot']){
   if(question.type==='填空题')return formatFillAnswers(question.fillAnswers)
   return question.referenceAnswer||'未设置参考答案'
 }
-function paragraph(value:string,options:{bold?:boolean;size?:number;space?:number;keepNext?:boolean;runs?:TextRun[]}={}){
+function paragraph(value:string,options:{bold?:boolean;size?:number;space?:number;keepNext?:boolean;runs?:TextRun[];align?:'left'|'center'|'right'}={}){
   const runs=options.runs?.map(run=>run.text).join('')===value?options.runs:[{text:value,bold:options.bold}]
   const content=runs!.map(run=>`<w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:eastAsia="宋体"/><w:sz w:val="${options.size||24}"/>${run.bold?'<w:b/>':''}${run.italic?'<w:i/>':''}</w:rPr>${run.text.split('\n').map(line=>`<w:t xml:space="preserve">${xmlEscape(line)}</w:t>`).join('<w:br/>')}</w:r>`).join('')
-  return `<w:p><w:pPr><w:snapToGrid w:val="0"/><w:spacing w:before="0" w:after="${options.space??80}" w:line="380" w:lineRule="exact"/>${options.keepNext?'<w:keepNext/>':''}<w:keepLines/><w:widowControl/></w:pPr>${content}</w:p>`
+  return `<w:p><w:pPr><w:snapToGrid w:val="0"/>${options.align?`<w:jc w:val="${options.align}"/>`:''}<w:spacing w:before="0" w:after="${options.space??80}" w:line="380" w:lineRule="exact"/>${options.keepNext?'<w:keepNext/>':''}<w:keepLines/><w:widowControl/></w:pPr>${content}</w:p>`
 }
 export type ImageResolver=(id:string)=>Promise<{bytes:Uint8Array;width:number;height:number}>
 export async function buildPaperDocument(bytes:Uint8Array,paper:PaperRecord,kind:DocumentKind,resolveImage?:ImageResolver):Promise<Uint8Array>{
@@ -137,9 +138,9 @@ export async function buildPaperDocument(bytes:Uint8Array,paper:PaperRecord,kind
     const width=Math.floor(pageWidth/635),cellWidth=Math.floor(width/columns),margin=Math.round(gap*15/2)
     return `<w:tbl><w:tblPr><w:tblW w:w="${width}" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:tblCellMar><w:left w:w="${margin}" w:type="dxa"/><w:right w:w="${margin}" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>${Array.from({length:columns},()=>`<w:gridCol w:w="${cellWidth}"/>`).join('')}</w:tblGrid>${rows.map(row=>`<w:tr><w:trPr><w:cantSplit/></w:trPr>${Array.from({length:columns},(_,index)=>`<w:tc><w:tcPr><w:tcW w:w="${cellWidth}" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>${row[index]||paragraph('')}</w:tc>`).join('')}</w:tr>`).join('')}</w:tbl>`
   }
-  async function gridsXml(q:PaperRecord['items'][number]['snapshot']){
+  async function gridsXml(grids:ImageGridBlock[]){
     let result=''
-    for(const grid of q.imageGrids||[]){const cells=[];for(const item of grid.items)cells.push(await imageXml(item.assetId,pageWidth/grid.columns-grid.gap*9525,grid.imageHeight*9525,grid.fit,grid.align==='start'?'left':grid.align==='end'?'right':'center')+paragraph(item.caption,{size:22}));const rows=[];for(let i=0;i<cells.length;i+=grid.columns)rows.push(cells.slice(i,i+grid.columns));result+=table(rows,grid.columns,grid.gap)}
+    for(const grid of grids){const cells=[];for(const item of grid.items)cells.push(await imageXml(item.assetId,pageWidth/grid.columns-grid.gap*9525,grid.imageHeight*9525,grid.fit,grid.align==='start'?'left':grid.align==='end'?'right':'center')+paragraph(item.caption,{size:22,align:grid.align==='start'?'left':grid.align==='end'?'right':'center'}));const rows=[];for(let i=0;i<cells.length;i+=grid.columns)rows.push(cells.slice(i,i+grid.columns));result+=table(rows,grid.columns,grid.gap)}
     return result
   }
   async function matchingXml(q:PaperRecord['items'][number]['snapshot']){
@@ -157,11 +158,16 @@ export async function buildPaperDocument(bytes:Uint8Array,paper:PaperRecord,kind
     const q=item.snapshot;validateImageGrids(q.imageGrids);if(q.type==='连线题')validateMatching(q.matching!);const label=`${item.position}. `
     if(kind==='answers')return paragraph(`${label}${answerText(q)}（${item.score} 分）`,{bold:true})+(q.explanation?paragraph(`解析：${q.explanation}`):'')
     const suffix=`${q.type==='选择题'&&q.answerMode==='multiple'?'（多选）':''}${q.type==='选择题'?'（　　）':''}（${item.score} 分）`
-    const titleRuns=q.titleRuns?.map(run=>run.text).join('')===q.title?q.titleRuns:[{text:q.title}]
-    let xml=paragraph(`${label}${q.title}${suffix}`,{keepNext:true,runs:[{text:label},...titleRuns!,{text:suffix}]})
+    const layout=promptLayout(q.title,q.titleRuns,q.imageGrids)
+    let xml=layout[0]?.kind==='image-grid'?paragraph(label,{keepNext:true}):''
+    for(const [index,block] of layout.entries()){
+      if(block.kind==='image-grid'){xml+=await gridsXml([block.grid]);continue}
+      const prefix=index===0?label:'',ending=index===layout.length-1?suffix:''
+      xml+=paragraph(`${prefix}${block.text}${ending}`,{keepNext:true,runs:[{text:prefix},...block.runs,{text:ending}]})
+    }
+    if(layout[layout.length-1]?.kind==='image-grid')xml+=paragraph(suffix,{keepNext:true})
     const images=questionAttachments(q).filter(item=>item.assetType==='image')
     for(const attachment of images)xml+=await imageXml(attachment.id)
-    xml+=await gridsXml(q)
     if(q.type==='连线题')xml+=await matchingXml(q)
     if(!images.length&&q.hasImage&&!q.imageGrids?.some(grid=>grid.items.length)&&!q.matching)throw new Error(`第 ${item.position} 题缺少图片素材，请重新导入图片后再组卷`)
     const audio=questionAttachments(q).filter(item=>item.assetType==='audio')

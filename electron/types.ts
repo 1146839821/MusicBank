@@ -14,7 +14,7 @@ export interface MatchingItem { id:string; contentType:'text'|'image'; text:stri
 export interface MatchingPair { sourceId:string; targetId:string }
 export interface MatchingData { version:1; sources:MatchingItem[]; targets:MatchingItem[]; pairs:MatchingPair[]; scoring:'per-pair'|'all-or-nothing'; targetOrder?:string[] }
 export interface ImageGridItem { id:string; assetId:string; caption:string }
-export interface ImageGridBlock { id:string; kind:'image-grid'; columns:2|3|4; imageHeight:number; fit:'contain'|'cover'; gap:number; align:'start'|'center'|'end'; items:ImageGridItem[] }
+export interface ImageGridBlock { id:string; kind:'image-grid'; columns:2|3|4; imageHeight:number; fit:'contain'|'cover'; gap:number; align:'start'|'center'|'end'; items:ImageGridItem[]; afterParagraph?:number }
 export interface QuestionRecord {
   imageGrids?:ImageGridBlock[]
   matching?:MatchingData

@@ -57,6 +57,20 @@ describe('real Word exam templates',()=>{
     const result=await JSZip.loadAsync(await buildPaperDocument(source,exam,'paper',async()=>({bytes:new Uint8Array([1,2,3]),width:400,height:100})))
     expect(result.file('word/media/musicbank-1.png')).not.toBeNull();expect(await result.file('word/document.xml')!.async('string')).toContain('musicbankImage1');expect(await result.file('word/_rels/document.xml.rels')!.async('string')).toContain('media/musicbank-1.png')
   })
+  it('exports interleaved text and image grids in the same order with emphasis and answer space',async()=>{
+    const q=question('选择题');q.title='观察图一\n再观察图二\n选择正确答案';q.titleRuns=[{text:'观察图一\n再观察图二\n选择正确答案',bold:true}];q.hasImage=true
+    const grid=(id:string,afterParagraph:number)=>({id,kind:'image-grid' as const,columns:2 as const,imageHeight:120,fit:'contain' as const,gap:12,align:'center' as const,afterParagraph,items:[{id:id+'-item',assetId:id+'-asset',caption:'图文说明：'+id}]})
+    q.imageGrids=[grid('首图',0),grid('图一',1),grid('图二',2)]
+    // Resource IDs are stable identifiers; captions may contain arbitrary ordinary text.
+    q.imageGrids.forEach((g,i)=>{g.id='grid-'+i;g.items[0].id='item-'+i;g.items[0].assetId='asset-'+i})
+    const exam={...paper(),items:[{position:1,questionId:q.id,score:2,snapshot:q}],totalScore:2}
+    const result=await xml(await buildPaperDocument(await template(),exam,'paper',async()=>({bytes:new Uint8Array([1,2,3]),width:200,height:200})))
+    const positions=['图文说明：首图','观察图一','图文说明：图一','再观察图二','图文说明：图二','选择正确答案','（　　）'].map(value=>result.indexOf(value))
+    expect(positions.every(value=>value>=0)).toBe(true)
+    expect(positions).toEqual([...positions].sort((a,b)=>a-b))
+    expect(result).toContain('<w:b/>')
+    expect(result).not.toContain('afterParagraph')
+  })
   it('removes author template links while preserving cached document styles',async()=>{
     const zip=await JSZip.loadAsync(await template())
     zip.file('word/_rels/settings.xml.rels','<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/attachedTemplate" TargetMode="External" Target="file:///author/private.dotx"/></Relationships>')

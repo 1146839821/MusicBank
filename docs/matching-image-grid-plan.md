@@ -46,7 +46,7 @@
 
 ## 实施结果（2026-10-21）
 
-已接入上述全部功能入口。新增 `electron/matching.ts` 和 `electron/image-grids.ts` 作为数据校验边界；新增 `AssetImage.vue`、`ImageGrids.vue`、`MatchingEditor.vue`、`MatchingQuestion.vue`。现有编辑器仍保存纯文本与格式片段，图文网格保存独立结构化块并随题干渲染，不存任意 HTML；不是 Tiptap 节点，也不支持任意段落之间插入网格。
+已接入上述全部功能入口。新增 `electron/matching.ts` 和 `electron/image-grids.ts` 作为数据校验边界；新增 `AssetImage.vue`、`ImageGrids.vue`、`MatchingEditor.vue`、`MatchingQuestion.vue`。现有编辑器仍保存纯文本与格式片段，图文网格保存独立结构化块并随题干渲染，不存任意 HTML；不是 Tiptap 节点。后续增强已支持按段落定位，详见下文。
 
 数据库迁移版本 2026102001：显式检查后添加 matching_json / image_grids_json；事务扩充题型 CHECK，复制全部旧列、恢复原索引并检查外键。历史试卷资源引用执行 v2 回填。备份格式仍为兼容的版本 1，新增结构在恢复覆盖前校验。历史试卷完整快照不随原题编辑/删除而改变。
 
@@ -70,4 +70,15 @@ PDF 验收：从实际 docx-preview 排版 DOM 调用 Electron 原生 documentPd
 - tests/matching.test.ts、matching-persistence.test.ts、question-media.test.ts、template-storage.test.ts：新功能及兼容回归。
 - docs/matching-image-grid-plan.md：审查、实施计划和验收记录。
 
-待人工确认项：真实乐器教学素材的内容校对、实体打印效果、Windows 安装/卸载操作。功能范围说明：第一版提供上方图片/文字、下方名称的一对一匹配；图文网格是题干后的结构化块，未更换原编辑器，也不支持任意文本段落间的自由嵌套。
+待人工确认项：真实乐器教学素材的内容校对、实体打印效果、Windows 安装/卸载操作。功能范围说明：第一版提供上方图片/文字、下方名称的一对一匹配；图文网格使用结构化块，未更换原编辑器；后续增强已支持题干段落之间的网格布局，不支持网格内再嵌套网格。
+
+
+## 段间图文布局增强（2026-10-21）
+
+ImageGridBlock 新增可选 afterParagraph：0 表示题干开头，正整数表示第几段之后；未设置保持旧版末尾行为。删除段落导致位置超出范围时，网格暂按题干末尾显示，保留原位置并在控件中说明。段落以录入的换行区分，不受窗口自动折行影响。该字段保存在现有 JSON 列，旧备份无需变更，无新增 SQLite schema 迁移。
+
+新增 electron/prompt-layout.ts，为预览、练习、考试、记录和 Word 导出共用文字/网格排序；切分格式片段而不丢弃加粗、倾斜和空白行。新增 QuestionPrompt.vue，替代各详情页单独的题干加末尾网格拼接。ImageGrids 增加位置选择；PromptEditor 暴露当前光标所在段落，新建网格默认插入该段之后，也可手动调整到开头或末尾。Word/PDF 使用原生表格保持相同顺序及说明对齐。另修正学生预览误显示连线标准答案的问题；教师编辑界面保留标准对应关系。
+
+修改文件：electron/types.ts、image-grids.ts、prompt-layout.ts、paper-documents.ts；src/App.vue；src/components/QuestionPrompt.vue、ImageGrids.vue、PromptEditor.vue、ExamHistory.vue；tests/prompt-layout.test.ts、paper-documents.test.ts、matching-persistence.test.ts。
+
+本机 174 项测试、30 个测试文件、Vue/TypeScript 检查、前端和 Electron 构建全部通过。浏览器验收包括两段题干中插入图片网格、第一段加粗、保存重开恢复、六张实际图片的 Word 预览；布局不使用页面截图作为导出内容。旧版没有位置字段的题目保持原有末尾布局。

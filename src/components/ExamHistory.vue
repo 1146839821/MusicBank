@@ -3,7 +3,7 @@ import {formatFillAnswers} from '../../electron/fill-answers'
 import {onMounted,ref} from 'vue'
 import type {ExamSessionRecord,ExamAnswerRecord} from '../../electron/types'
 import {listExamSessions,reviewExamAnswer} from '../exam-store'
-import ImageGrids from './ImageGrids.vue'
+import QuestionPrompt from './QuestionPrompt.vue'
 import MatchingQuestion from './MatchingQuestion.vue'
 import {matchingReference,matchingComplete} from '../../electron/matching'
 import QuestionText from './QuestionText.vue'
@@ -34,8 +34,8 @@ onMounted(load)
     <button class="ghost-button" @click="selected=null">← 返回记录</button>
     <div class="history-summary"><h2>{{selected.paper.name}}</h2><p>考生：{{selected.attempt.candidateName||'未填写姓名'}}</p><p>已评分得分 {{total(selected)}} / {{selected.paper.totalScore}} 分 · {{pending(selected)}} 道待批阅</p></div>
     <article v-for="item in selected.paper.items" :key="item.position" class="history-question">
-      <h3>{{item.position}}. <QuestionText :text="item.snapshot.title" :runs="item.snapshot.titleRuns" /></h3>
-      <ImageGrids :model-value="item.snapshot.imageGrids||[]"/><MatchingQuestion v-if="item.snapshot.matching" :data="item.snapshot.matching" :model-value="answer(item.position)?.answer||''" readonly/><QuestionMedia :attachments="questionAttachments(item.snapshot)" />
+      <div class="history-question-number">第 {{item.position}} 题</div><QuestionPrompt :text="item.snapshot.title" :runs="item.snapshot.titleRuns" :grids="item.snapshot.imageGrids"><template #default="part"><h3><QuestionText :text="part.text" :runs="part.runs" /></h3></template></QuestionPrompt>
+      <MatchingQuestion v-if="item.snapshot.matching" :data="item.snapshot.matching" :model-value="answer(item.position)?.answer||''" readonly/><QuestionMedia :attachments="questionAttachments(item.snapshot)" />
       <p v-for="(option,index) in item.snapshot.type==='选择题'?(item.snapshot.options||[]):[]" :key="index">{{String.fromCharCode(65+index)}}. {{option}}</p>
       <p v-if="item.snapshot.type!=='连线题'">学生答案：{{!answer(item.position)?.answer?'未作答':item.snapshot.type==='判断题'?judgmentLabel(answer(item.position)?.answer):answer(item.position)?.answer}}</p>
       <p class="history-reference">参考答案：{{item.snapshot.type==='连线题'&&item.snapshot.matching?matchingReference(item.snapshot.matching):item.snapshot.type==='判断题'?judgmentLabel(item.snapshot.correctAnswer):item.snapshot.type==='填空题'?formatFillAnswers(item.snapshot.fillAnswers):item.snapshot.correctAnswer || item.snapshot.referenceAnswer || '未设置'}}</p>
@@ -54,5 +54,5 @@ onMounted(load)
 </section>
 </template>
 <style scoped>
-.history-heading,.history-record{display:flex;align-items:center;justify-content:space-between;gap:24px}.history-heading{margin-bottom:28px}.history-heading p,.history-record p{color:var(--text-secondary,#747b86);margin:8px 0}.history-record,.history-summary,.history-question{background:var(--surface,#fff);border:1px solid var(--border,#e5e7eb);border-radius:16px;padding:24px;margin:16px 0}.history-record>div{min-width:0}.history-record p,.history-summary p{overflow-wrap:anywhere}.history-record h3,.history-question h3{margin:0 0 12px}.history-error{color:#c53737}.history-reference{color:var(--text-secondary,#747b86)}.history-grading{display:flex;align-items:end;gap:16px;flex-wrap:wrap}.history-grading label{display:grid;gap:8px}.history-grading label:nth-child(2){flex:1}.history-grading input{border:1px solid var(--border,#e5e7eb);border-radius:8px;padding:10px;min-width:100px;width:100%}.history-grading label:first-child{width:140px}@media(max-width:760px){.history-heading,.history-record{align-items:start;flex-direction:column}}
+.history-question-number{font-size:12px;color:var(--muted);margin-bottom:12px}.history-heading,.history-record{display:flex;align-items:center;justify-content:space-between;gap:24px}.history-heading{margin-bottom:28px}.history-heading p,.history-record p{color:var(--text-secondary,#747b86);margin:8px 0}.history-record,.history-summary,.history-question{background:var(--surface,#fff);border:1px solid var(--border,#e5e7eb);border-radius:16px;padding:24px;margin:16px 0}.history-record>div{min-width:0}.history-record p,.history-summary p{overflow-wrap:anywhere}.history-record h3,.history-question h3{margin:0 0 12px}.history-error{color:#c53737}.history-reference{color:var(--text-secondary,#747b86)}.history-grading{display:flex;align-items:end;gap:16px;flex-wrap:wrap}.history-grading label{display:grid;gap:8px}.history-grading label:nth-child(2){flex:1}.history-grading input{border:1px solid var(--border,#e5e7eb);border-radius:8px;padding:10px;min-width:100px;width:100%}.history-grading label:first-child{width:140px}@media(max-width:760px){.history-question-number{font-size:12px;color:var(--muted);margin-bottom:12px}.history-heading,.history-record{align-items:start;flex-direction:column}}
 </style>
