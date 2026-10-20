@@ -10,7 +10,7 @@ it('checks all three bundle locations and rejects shipped user data or missing t
   const source = join(root, 'source')
   const script = resolve('scripts/verify-package.mjs')
   try {
-    for (const file of ['dist/index.html','dist-electron/main.js','dist-electron/preload.cjs','dist/templates/试卷模板.docx','node_modules/better-sqlite3/package.json','node_modules/better-sqlite3/lib/index.js']) {
+    for (const file of ['dist/index.html','dist-electron/main.js','dist-electron/db.js','dist-electron/preload.cjs','dist/templates/试卷模板.docx','node_modules/better-sqlite3/package.json','node_modules/better-sqlite3/lib/index.js']) {
       const target = join(source, file)
       mkdirSync(resolve(target, '..'), { recursive: true })
       writeFileSync(target, 'fixture')
