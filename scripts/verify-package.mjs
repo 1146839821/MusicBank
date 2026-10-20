@@ -11,7 +11,7 @@ const folder = platform === 'mac'
   ? join('release', arch === 'x64' ? 'mac' : `mac-${arch}`, 'MusicBank.app', 'Contents', 'Resources')
   : join('release', arch === 'x64' ? 'win-unpacked' : `win-${arch}-unpacked`, 'resources')
 const archive = join(folder, 'app.asar')
-const files = listPackage(archive)
+const files = listPackage(archive).map(file => file.replaceAll('\\', '/'))
 for (const file of ['dist/index.html', 'dist-electron/main.js', 'dist-electron/preload.cjs', 'dist/templates/试卷模板.docx']) {
   if (!files.includes(`/${file}`) || !extractFile(archive, file).length) throw new Error(`Missing packaged file: ${file}`)
 }
