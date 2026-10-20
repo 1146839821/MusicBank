@@ -31,6 +31,7 @@ import {defaultCategories,orderedCategories} from '../electron/category-catalog'
 import {listCategories} from './category-store'
 import type {CategoryRecord} from '../electron/types'
 import { summarizePractice, type PracticeResponse } from './practice'
+import { usePracticeDrafts } from './practice-drafts'
 
 type View = 'dashboard' | 'library' | 'categories' | 'add' | 'papers' | 'practice' | 'exam' | 'exam-history' | 'wrong' | 'backup' | 'settings'
 type Question = import('../electron/types').QuestionRecord
@@ -360,7 +361,7 @@ function go(view: View, navLabel?: string) {
   activeView.value = view
   activeNavLabel.value = navLabel || (view === 'add' ? '新增试题' : view === 'library' ? '试题管理' : view === 'categories' ? '分类管理' : view === 'practice' ? '顺序练习' : view === 'exam-history' ? '考试记录' : view === 'wrong' ? '我的错题' : view === 'papers' ? '试卷管理' : view === 'backup' ? '数据备份' : view === 'settings' ? '系统设置' : '数据首页')
   if (view === 'add' && previousView !== 'add') { resetForm(); addStep.value = 1 }
-  if (view === 'practice') { studyMode.value = navLabel === '专项练习' ? 'special' : 'sequence'; Object.keys(practiceResponses).forEach((id) => delete practiceResponses[id]); practiceIndex.value = 0; resetPractice() }
+  if (view === 'practice') { studyMode.value = navLabel === '专项练习' ? 'special' : 'sequence'; Object.keys(practiceResponses).forEach((id) => delete practiceResponses[id]); practiceDrafts.clear(); practiceIndex.value = 0; resetPractice() }
   if (view === 'exam') startExam()
 }
 
@@ -661,6 +662,7 @@ async function publishQuestion() {
   activeNavLabel.value = '试题管理'
 }
 
+const practiceDrafts = usePracticeDrafts(practiceAnswer)
 const practiceResponses = reactive<Record<string, PracticeResponse>>({})
 const practiceSummary = computed(() => summarizePractice(practiceQuestions.value, practiceResponses))
 const practiceCompletedCount = computed(() => practiceSummary.value.completed)
@@ -668,8 +670,8 @@ const practiceAccuracy = computed(() => practiceSummary.value.accuracy === null 
 
 function resetPractice() {
   const response = practiceCurrent.value ? practiceResponses[practiceCurrent.value.id] : undefined
-  practiceAnswer.value = response?.answer || ''
-  practiceChoiceAnswers.value = practiceCurrent.value?.type === '选择题' ? answerLetters(response?.answer) : []
+  practiceDrafts.load(practiceCurrent.value?.id, response?.answer)
+  practiceChoiceAnswers.value = practiceCurrent.value?.type === '选择题' ? answerLetters(practiceAnswer.value) : []
   practiceSubmitted.value = Boolean(response)
   practiceResult.value = response?.result || null
 }
@@ -871,6 +873,7 @@ function reviewWrong(question: Question) {
   const index = practiceQuestions.value.findIndex((item) => item.id === question.id)
   if (index >= 0) {
     delete practiceResponses[question.id]
+    practiceDrafts.remove(question.id)
     practiceIndex.value = index
     resetPractice()
     activeView.value = 'practice'
