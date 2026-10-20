@@ -1,4 +1,5 @@
 import type {ExamAnswerRecord, ExamAttemptRecord, ExamSessionRecord, PaperRecord} from '../electron/types'
+import {candidateName} from '../electron/exam-identity'
 const key='musicbank.exam-sessions'
 function localSessions():ExamSessionRecord[] {
   const raw=localStorage.getItem(key)
@@ -10,9 +11,11 @@ function localSessions():ExamSessionRecord[] {
 function write(sessions:ExamSessionRecord[]) {localStorage.setItem(key,JSON.stringify(sessions))}
 export async function listExamSessions() {return window.musicBank ? window.musicBank.exams.list() : localSessions()}
 export async function saveExamProgress(attempt:ExamAttemptRecord,paper:PaperRecord) {
+  attempt={...attempt,candidateName:candidateName(attempt.candidateName)}
   if(window.musicBank) return window.musicBank.exams.start(attempt)
   const sessions=localSessions(),existing=sessions.find(session=>session.attempt.id===attempt.id)
   if(existing?.attempt.status==='已交卷') throw new Error('该考试已经交卷')
+  if(existing&&(existing.attempt.paperId!==attempt.paperId||existing.attempt.startedAt!==attempt.startedAt||candidateName(existing.attempt.candidateName)!==attempt.candidateName))throw new Error('考试身份与原始记录不一致')
   if(existing) existing.attempt=attempt
   else sessions.unshift({attempt,answers:[],paper:JSON.parse(JSON.stringify(paper))})
   write(sessions)
@@ -28,7 +31,7 @@ export async function finishExam(attempt:ExamAttemptRecord,answers:ExamAnswerRec
   if(window.musicBank) return window.musicBank.exams.finish(attempt,answers)
   const sessions=localSessions(),session=sessions.find(session=>session.attempt.id===attempt.id)
   if(!session || session.attempt.status!=='进行中') throw new Error('考试不存在或已经交卷')
-  session.attempt=attempt;session.answers=answers;write(sessions)
+  session.attempt={...session.attempt,status:'已交卷',submittedAt:attempt.submittedAt,remainingSeconds:attempt.remainingSeconds};session.answers=answers;write(sessions)
 }
 export async function reviewExamAnswer(input:{attemptId:string;position:number;score:number;comment:string}) {
   if(window.musicBank) return window.musicBank.exams.review(input)

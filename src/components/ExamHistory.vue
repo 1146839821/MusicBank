@@ -28,7 +28,7 @@ onMounted(load)
   <p v-if="error" role="alert" class="history-error">{{error}}</p><p v-if="notice" role="status">{{notice}}</p>
   <template v-if="selected">
     <button class="ghost-button" @click="selected=null">← 返回记录</button>
-    <div class="history-summary"><h2>{{selected.paper.name}}</h2><p>已评分得分 {{total(selected)}} / {{selected.paper.totalScore}} 分 · {{pending(selected)}} 道待批阅</p></div>
+    <div class="history-summary"><h2>{{selected.paper.name}}</h2><p>考生：{{selected.attempt.candidateName||'未填写姓名'}}</p><p>已评分得分 {{total(selected)}} / {{selected.paper.totalScore}} 分 · {{pending(selected)}} 道待批阅</p></div>
     <article v-for="item in selected.paper.items" :key="item.position" class="history-question">
       <h3>{{item.position}}. <QuestionText :text="item.snapshot.title" :runs="item.snapshot.titleRuns" /></h3>
       <QuestionMedia :attachments="questionAttachments(item.snapshot)" />
@@ -43,12 +43,12 @@ onMounted(load)
   <template v-else>
     <p v-if="!busy&&!sessions.length" class="history-summary">暂无考试记录。在模拟考试中开始一份试卷后，答题进度会自动保存。</p>
     <article v-for="session in sessions" :key="session.attempt.id" class="history-record">
-      <div><h3>{{session.paper.name}}</h3><p>{{new Date(session.attempt.startedAt).toLocaleString('zh-CN')}} · {{session.attempt.status}}</p><p v-if="session.attempt.status==='已交卷'">{{total(session)}} / {{session.paper.totalScore}} 分 · {{pending(session)}} 道待批阅</p><p v-else>已答 {{session.answers.filter(answer=>answer.answer?.trim()).length}} / {{session.paper.items.length}} 题 · 剩余 {{Math.floor(session.attempt.remainingSeconds/60)}} 分 {{session.attempt.remainingSeconds%60}} 秒</p></div>
+      <div><h3>{{session.paper.name}}</h3><p>考生：{{session.attempt.candidateName||'未填写姓名'}}</p><p>{{new Date(session.attempt.startedAt).toLocaleString('zh-CN')}} · {{session.attempt.status}}</p><p v-if="session.attempt.status==='已交卷'">{{total(session)}} / {{session.paper.totalScore}} 分 · {{pending(session)}} 道待批阅</p><p v-else>已答 {{session.answers.filter(answer=>answer.answer?.trim()).length}} / {{session.paper.items.length}} 题 · 剩余 {{Math.floor(session.attempt.remainingSeconds/60)}} 分 {{session.attempt.remainingSeconds%60}} 秒</p></div>
       <button v-if="session.attempt.status==='进行中'" class="primary-button" :disabled="busy" @click="emit('resume',session)">继续考试</button><button v-else class="secondary-button" @click="open(session)">查看与批阅</button>
     </article>
   </template>
 </section>
 </template>
 <style scoped>
-.history-heading,.history-record{display:flex;align-items:center;justify-content:space-between;gap:24px}.history-heading{margin-bottom:28px}.history-heading p,.history-record p{color:var(--text-secondary,#747b86);margin:8px 0}.history-record,.history-summary,.history-question{background:var(--surface,#fff);border:1px solid var(--border,#e5e7eb);border-radius:16px;padding:24px;margin:16px 0}.history-record h3,.history-question h3{margin:0 0 12px}.history-error{color:#c53737}.history-reference{color:var(--text-secondary,#747b86)}.history-grading{display:flex;align-items:end;gap:16px;flex-wrap:wrap}.history-grading label{display:grid;gap:8px}.history-grading label:nth-child(2){flex:1}.history-grading input{border:1px solid var(--border,#e5e7eb);border-radius:8px;padding:10px;min-width:100px;width:100%}.history-grading label:first-child{width:140px}@media(max-width:760px){.history-heading,.history-record{align-items:start;flex-direction:column}}
+.history-heading,.history-record{display:flex;align-items:center;justify-content:space-between;gap:24px}.history-heading{margin-bottom:28px}.history-heading p,.history-record p{color:var(--text-secondary,#747b86);margin:8px 0}.history-record,.history-summary,.history-question{background:var(--surface,#fff);border:1px solid var(--border,#e5e7eb);border-radius:16px;padding:24px;margin:16px 0}.history-record>div{min-width:0}.history-record p,.history-summary p{overflow-wrap:anywhere}.history-record h3,.history-question h3{margin:0 0 12px}.history-error{color:#c53737}.history-reference{color:var(--text-secondary,#747b86)}.history-grading{display:flex;align-items:end;gap:16px;flex-wrap:wrap}.history-grading label{display:grid;gap:8px}.history-grading label:nth-child(2){flex:1}.history-grading input{border:1px solid var(--border,#e5e7eb);border-radius:8px;padding:10px;min-width:100px;width:100%}.history-grading label:first-child{width:140px}@media(max-width:760px){.history-heading,.history-record{align-items:start;flex-direction:column}}
 </style>

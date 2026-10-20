@@ -65,6 +65,7 @@ export interface PaperRecord {
 }
 
 export interface ExamAttemptRecord {
+  candidateName?: string
   id: string
   paperId: string
   status: '进行中' | '已交卷'

@@ -1,3 +1,4 @@
+import {candidateName} from './exam-identity.js'
 import {validateCategories} from './category-catalog.js'
 import type {BackupPayload} from './types.js'
 
@@ -17,6 +18,7 @@ export function validateLearningBackup(payload:BackupPayload) {
     for(const session of payload.exams){
       const attempt=session?.attempt
       if(!attempt||!text(attempt.id)||ids.has(attempt.id))invalid('考试编号缺失或重复')
+      candidateName(attempt.candidateName)
       ids.add(attempt.id)
       const paper=papers.get(attempt.paperId)
       if(!paper)invalid('考试关联的试卷不存在')

@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3'
+import {candidateName} from './exam-identity.js'
 import {normalizeChoice} from './choice-options.js'
 import {validateLearningBackup} from './learning-backup.js'
 import { questionAttachments } from './question-assets.js'
@@ -84,7 +85,7 @@ export class MusicBankDatabase {
       CREATE TABLE IF NOT EXISTS paper_templates (id TEXT PRIMARY KEY, metadata_json TEXT NOT NULL, bytes BLOB NOT NULL, archived INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS system_settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
     `)
-    for (const statement of ['ALTER TABLE questions ADD COLUMN choice_identity_json TEXT', 'ALTER TABLE categories ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE questions ADD COLUMN attachments_json TEXT', 'ALTER TABLE questions ADD COLUMN title_runs_json TEXT', 'ALTER TABLE questions ADD COLUMN notation_json TEXT', 'ALTER TABLE questions ADD COLUMN has_audio INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE questions ADD COLUMN has_image INTEGER NOT NULL DEFAULT 0', "ALTER TABLE questions ADD COLUMN answer_mode TEXT NOT NULL DEFAULT 'single'"]) {
+    for (const statement of ['ALTER TABLE exam_attempts ADD COLUMN candidate_name TEXT', 'ALTER TABLE questions ADD COLUMN choice_identity_json TEXT', 'ALTER TABLE categories ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE questions ADD COLUMN attachments_json TEXT', 'ALTER TABLE questions ADD COLUMN title_runs_json TEXT', 'ALTER TABLE questions ADD COLUMN notation_json TEXT', 'ALTER TABLE questions ADD COLUMN has_audio INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE questions ADD COLUMN has_image INTEGER NOT NULL DEFAULT 0', "ALTER TABLE questions ADD COLUMN answer_mode TEXT NOT NULL DEFAULT 'single'"]) {
       try { this.db.exec(statement) } catch { /* existing database already has the column */ }
     }
     // Rebuild with foreign keys disabled outside the transaction, retaining all dependent rows.
@@ -424,13 +425,13 @@ export class MusicBankDatabase {
   }
 
   listExamSessions(): ExamSessionRecord[] {
-    const attempts = this.db.prepare('SELECT id,paper_id AS paperId,status,started_at AS startedAt,submitted_at AS submittedAt,remaining_seconds AS remainingSeconds FROM exam_attempts ORDER BY started_at DESC,id DESC').all() as ExamAttemptRecord[]
+    const attempts = this.db.prepare('SELECT id,paper_id AS paperId,candidate_name AS candidateName,status,started_at AS startedAt,submitted_at AS submittedAt,remaining_seconds AS remainingSeconds FROM exam_attempts ORDER BY started_at DESC,id DESC').all() as ExamAttemptRecord[]
     const papers = this.listPapers()
     return attempts.flatMap(attempt => {
       const paper = papers.find(item=>item.id===attempt.paperId)
       if (!paper) return []
       const rows = this.db.prepare('SELECT attempt_id AS attemptId,position,answer_json AS answerJson,score,review_status AS reviewStatus,comment FROM exam_answers WHERE attempt_id=? ORDER BY position').all(attempt.id) as Array<ExamAnswerRecord & {answerJson:string|null}>
-      return [{attempt:{...attempt,submittedAt:attempt.submittedAt??undefined}, paper, answers:rows.map(({answerJson,...row})=>({...row,score:row.score??undefined,reviewStatus:row.reviewStatus??undefined,comment:row.comment??undefined,answer:answerJson===null?undefined:JSON.parse(answerJson)}))}]
+      return [{attempt:{...attempt,candidateName:attempt.candidateName??undefined,submittedAt:attempt.submittedAt??undefined}, paper, answers:rows.map(({answerJson,...row})=>({...row,score:row.score??undefined,reviewStatus:row.reviewStatus??undefined,comment:row.comment??undefined,answer:answerJson===null?undefined:JSON.parse(answerJson)}))}]
     })
   }
 
@@ -454,14 +455,15 @@ export class MusicBankDatabase {
   }
 
   saveExamAttempt(attempt: ExamAttemptRecord) {
+    attempt={...attempt,candidateName:candidateName(attempt.candidateName)}
     if (!Number.isInteger(attempt.remainingSeconds) || attempt.remainingSeconds<0) throw new Error('剩余时间无效')
-    const existing=this.db.prepare('SELECT status,paper_id AS paperId,started_at AS startedAt FROM exam_attempts WHERE id=?').get(attempt.id) as {status:string;paperId:string;startedAt:string}|undefined
+    const existing=this.db.prepare('SELECT status,paper_id AS paperId,candidate_name AS candidateName,started_at AS startedAt FROM exam_attempts WHERE id=?').get(attempt.id) as {status:string;paperId:string;candidateName?:string;startedAt:string}|undefined
     if (existing?.status==='已交卷') throw new Error('已交卷的考试不可重新开始')
-    if (existing && (existing.paperId!==attempt.paperId || existing.startedAt!==attempt.startedAt)) throw new Error('考试身份与原始记录不一致')
-    this.db.prepare(`INSERT INTO exam_attempts(id,paper_id,status,started_at,submitted_at,remaining_seconds)
-      VALUES (?,?,?,?,?,?)
+    if (existing && (existing.paperId!==attempt.paperId || existing.startedAt!==attempt.startedAt || candidateName(existing.candidateName)!==attempt.candidateName)) throw new Error('考试身份与原始记录不一致')
+    this.db.prepare(`INSERT INTO exam_attempts(id,paper_id,status,started_at,submitted_at,remaining_seconds,candidate_name)
+      VALUES (?,?,?,?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET status=excluded.status,submitted_at=excluded.submitted_at,remaining_seconds=excluded.remaining_seconds`)
-      .run(attempt.id, attempt.paperId, attempt.status, attempt.startedAt, attempt.submittedAt || null, attempt.remainingSeconds)
+      .run(attempt.id, attempt.paperId, attempt.status, attempt.startedAt, attempt.submittedAt || null, attempt.remainingSeconds, attempt.candidateName||null)
     return attempt
   }
 
