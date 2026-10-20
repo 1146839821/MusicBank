@@ -129,3 +129,11 @@ ImageGridBlock 新增可选 afterParagraph：0 表示题干开头，正整数表
 - smoke 只在系统临时目录创建测试数据库，结束后清理，不接触用户应用数据。三平台工作流使用该检查，修改 smoke 脚本也会触发主分支打包。
 - 189 项测试、TypeScript、构建通过；本机重新打包 macOS arm64，原生 SQLite 和应用数据库往返检查均通过，检查未打包用户数据。
 - 构建运行 39462802366 对应前一应用提交 3a9ddeb；扩展 smoke 的提交需另行发起构建，不混用不同提交的验证结果。
+
+### 2026-10-21 Windows 安装/卸载自动验收
+
+- 新增 `scripts/verify-windows-installer.ps1`，仅允许在 GitHub Actions Windows 临时 runner 执行，防止误在用户机器安装或卸载。
+- 工作流打包检查后实际运行 NSIS 安装器：安装到带空格的新目录，检查主程序、app.asar、桌面/开始菜单快捷方式及 Windows 卸载登记；通过安装后的 Electron 执行包内数据库 smoke；运行卸载器，检查程序/快捷方式/登记清除，且 APPDATA 中本次测试创建的哨兵文件保留。
+- 所有子进程有 120 秒超时，测试只清理自己创建的路径和哨兵文件，不删除整个用户数据目录。卸载器使用本项目依赖的 NSIS 模板支持的 /S、/currentuser 与 _?= 参数。
+- 本机 189 项测试、TypeScript、构建、diff 检查通过；macOS 本机不能运行 PowerShell/NSIS，安装链路结果以 Windows CI 为准，执行前不宣称通过。
+- 上一运行 39463166094：Windows x64、macOS Intel 的扩展包内数据库检查通过；Apple silicon 排队任务最终 cancelled，整轮 conclusion failure，不计作三平台全通过。

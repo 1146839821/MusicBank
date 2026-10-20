@@ -8,6 +8,7 @@ on:
       - '.github/workflows/build-desktop.yml'
       - 'scripts/verify-package.mjs'
       - 'scripts/package-smoke.cjs'
+      - 'scripts/verify-windows-installer.ps1'
       - 'package.json'
       - 'package-lock.json'
     tags:
@@ -69,6 +70,11 @@ jobs:
 
       - name: Verify packaged contents, database initialization and exam persistence
         run: node scripts/verify-package.mjs ${{ matrix.platform }} ${{ matrix.arch }} --smoke
+
+      - name: Verify Windows installation, installed database and uninstall
+        if: matrix.platform == 'win'
+        shell: pwsh
+        run: ./scripts/verify-windows-installer.ps1
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
