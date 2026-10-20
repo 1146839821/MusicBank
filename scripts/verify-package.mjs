@@ -13,7 +13,7 @@ const folder = platform === 'mac'
 const archive = join(folder, 'app.asar')
 const files = listPackage(archive).map(file => file.replaceAll('\\', '/'))
 for (const file of ['dist/index.html', 'dist-electron/main.js', 'dist-electron/preload.cjs', 'dist/templates/试卷模板.docx']) {
-  if (!files.includes(`/${file}`) || !extractFile(archive, file).length) throw new Error(`Missing packaged file: ${file}`)
+  if (!files.includes(`/${file}`) || !extractFile(archive, join(...file.split('/'))).length) throw new Error(`Missing packaged file: ${file}`)
 }
 for (const file of ['node_modules/better-sqlite3/package.json', 'node_modules/better-sqlite3/lib/index.js']) {
   if (!files.includes(`/${file}`)) throw new Error(`Missing runtime dependency: ${file}`)
