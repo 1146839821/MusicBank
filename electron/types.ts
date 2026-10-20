@@ -26,6 +26,8 @@ export interface QuestionRecord {
   difficulty: string
   source?: string
   options?: string[]
+  optionIds?: string[]
+  correctOptionIds?: string[]
   correctAnswer?: string
   answerMode?: ChoiceMode
   fillAnswers?: string[]

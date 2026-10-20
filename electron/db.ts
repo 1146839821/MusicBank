@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3'
+import {normalizeChoice} from './choice-options.js'
 import {validateLearningBackup} from './learning-backup.js'
 import { questionAttachments } from './question-assets.js'
 import { musicCategories } from './music-categories.js'
@@ -10,6 +11,7 @@ import type { BackupPayload, AssetRecord, ExamAnswerRecord, ExamAttemptRecord, E
 
 type QuestionRow = Omit<QuestionRecord, 'updated' | 'hasAudio' | 'hasImage' | 'options' | 'correctAnswer' | 'fillAnswers' | 'referenceAnswer' | 'audioName' | 'audioDuration' | 'audioAssetId' | 'imageAssetId'> & {
   updated_at: string
+  choice_identity_json?: string
   options_json?: string
   correct_answer?: string
   fill_answers_json?: string
@@ -82,7 +84,7 @@ export class MusicBankDatabase {
       CREATE TABLE IF NOT EXISTS paper_templates (id TEXT PRIMARY KEY, metadata_json TEXT NOT NULL, bytes BLOB NOT NULL, archived INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS system_settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
     `)
-    for (const statement of ['ALTER TABLE categories ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE questions ADD COLUMN attachments_json TEXT', 'ALTER TABLE questions ADD COLUMN title_runs_json TEXT', 'ALTER TABLE questions ADD COLUMN notation_json TEXT', 'ALTER TABLE questions ADD COLUMN has_audio INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE questions ADD COLUMN has_image INTEGER NOT NULL DEFAULT 0', "ALTER TABLE questions ADD COLUMN answer_mode TEXT NOT NULL DEFAULT 'single'"]) {
+    for (const statement of ['ALTER TABLE questions ADD COLUMN choice_identity_json TEXT', 'ALTER TABLE categories ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE questions ADD COLUMN attachments_json TEXT', 'ALTER TABLE questions ADD COLUMN title_runs_json TEXT', 'ALTER TABLE questions ADD COLUMN notation_json TEXT', 'ALTER TABLE questions ADD COLUMN has_audio INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE questions ADD COLUMN has_image INTEGER NOT NULL DEFAULT 0', "ALTER TABLE questions ADD COLUMN answer_mode TEXT NOT NULL DEFAULT 'single'"]) {
       try { this.db.exec(statement) } catch { /* existing database already has the column */ }
     }
     // Rebuild with foreign keys disabled outside the transaction, retaining all dependent rows.
@@ -255,7 +257,7 @@ export class MusicBankDatabase {
 
   listQuestions(): QuestionRecord[] {
     const rows = this.db.prepare('SELECT * FROM questions ORDER BY updated_at DESC').all() as QuestionRow[]
-    return rows.map((row) => ({
+    return rows.map((row) => normalizeChoice({
       id: row.id,
       title: row.title,
       attachments: row.attachments_json ? JSON.parse(row.attachments_json) : undefined,
@@ -270,6 +272,7 @@ export class MusicBankDatabase {
       updated: formatUpdated(row.updated_at),
       difficulty: row.difficulty,
       source: row.source,
+      ...(row.choice_identity_json?JSON.parse(row.choice_identity_json):{}),
       options: row.options_json ? JSON.parse(row.options_json) : undefined,
       correctAnswer: row.correct_answer,
       answerMode: row.answer_mode === 'multiple' ? 'multiple' : 'single',
@@ -285,18 +288,20 @@ export class MusicBankDatabase {
   }
 
   saveQuestion(question: QuestionRecord) {
+    question=normalizeChoice(question)
     if (question.type === '判断题' && !['true','false'].includes(question.correctAnswer || '')) throw new Error('判断题必须选择正确或错误作为标准答案')
     const now = new Date().toISOString()
     const tx = this.db.transaction(() => {
       this.ensureQuestionCategories(question)
-      this.db.prepare(`INSERT INTO questions (id,title,attachments_json,title_runs_json,grade,category,subcategory,type,status,difficulty,source,options_json,correct_answer,answer_mode,fill_answers_json,reference_answer,explanation,audio_name,audio_duration,audio_asset_id,image_asset_id,notation_json,has_audio,has_image,created_at,updated_at)
-        VALUES (@id,@title,@attachments_json,@title_runs_json,@grade,@category,@subcategory,@type,@status,@difficulty,@source,@options_json,@correct_answer,@answer_mode,@fill_answers_json,@reference_answer,@explanation,@audio_name,@audio_duration,@audio_asset_id,@image_asset_id,@notation_json,@has_audio,@has_image,COALESCE((SELECT created_at FROM questions WHERE id=@id),@now),@now)
-        ON CONFLICT(id) DO UPDATE SET title=excluded.title,attachments_json=excluded.attachments_json,title_runs_json=excluded.title_runs_json,grade=excluded.grade,category=excluded.category,subcategory=excluded.subcategory,type=excluded.type,status=excluded.status,difficulty=excluded.difficulty,source=excluded.source,options_json=excluded.options_json,correct_answer=excluded.correct_answer,answer_mode=excluded.answer_mode,fill_answers_json=excluded.fill_answers_json,reference_answer=excluded.reference_answer,explanation=excluded.explanation,audio_name=excluded.audio_name,audio_duration=excluded.audio_duration,audio_asset_id=excluded.audio_asset_id,image_asset_id=excluded.image_asset_id,notation_json=excluded.notation_json,has_audio=excluded.has_audio,has_image=excluded.has_image,updated_at=excluded.updated_at`).run({
+      this.db.prepare(`INSERT INTO questions (id,title,attachments_json,title_runs_json,grade,category,subcategory,type,status,difficulty,source,options_json,choice_identity_json,correct_answer,answer_mode,fill_answers_json,reference_answer,explanation,audio_name,audio_duration,audio_asset_id,image_asset_id,notation_json,has_audio,has_image,created_at,updated_at)
+        VALUES (@id,@title,@attachments_json,@title_runs_json,@grade,@category,@subcategory,@type,@status,@difficulty,@source,@options_json,@choice_identity_json,@correct_answer,@answer_mode,@fill_answers_json,@reference_answer,@explanation,@audio_name,@audio_duration,@audio_asset_id,@image_asset_id,@notation_json,@has_audio,@has_image,COALESCE((SELECT created_at FROM questions WHERE id=@id),@now),@now)
+        ON CONFLICT(id) DO UPDATE SET title=excluded.title,attachments_json=excluded.attachments_json,title_runs_json=excluded.title_runs_json,grade=excluded.grade,category=excluded.category,subcategory=excluded.subcategory,type=excluded.type,status=excluded.status,difficulty=excluded.difficulty,source=excluded.source,options_json=excluded.options_json,choice_identity_json=excluded.choice_identity_json,correct_answer=excluded.correct_answer,answer_mode=excluded.answer_mode,fill_answers_json=excluded.fill_answers_json,reference_answer=excluded.reference_answer,explanation=excluded.explanation,audio_name=excluded.audio_name,audio_duration=excluded.audio_duration,audio_asset_id=excluded.audio_asset_id,image_asset_id=excluded.image_asset_id,notation_json=excluded.notation_json,has_audio=excluded.has_audio,has_image=excluded.has_image,updated_at=excluded.updated_at`).run({
         ...question,
         attachments_json: question.attachments ? JSON.stringify(question.attachments) : null,
         title_runs_json: question.titleRuns ? JSON.stringify(question.titleRuns) : null,
         subcategory: question.subcategory || null,
         source: question.source || null,
+        choice_identity_json:question.type==='选择题'?JSON.stringify({optionIds:question.optionIds,correctOptionIds:question.correctOptionIds}):null,
         options_json: question.options ? JSON.stringify(question.options) : null,
         fill_answers_json: question.fillAnswers ? JSON.stringify(question.fillAnswers) : null,
         correct_answer: question.correctAnswer || null,
@@ -326,9 +331,10 @@ export class MusicBankDatabase {
   }
 
   savePaper(paper: PaperRecord) {
+    paper={...paper,items:paper.items.map(item=>({...item,snapshot:normalizeChoice(item.snapshot)}))}
     if (this.db.prepare('SELECT 1 FROM exam_attempts WHERE paper_id=? LIMIT 1').get(paper.id)) {
       const previous=this.listPapers().find(item=>item.id===paper.id)
-      const comparable=(value:PaperRecord|undefined)=>value&&JSON.stringify([value.name,value.grade,value.totalScore,value.durationMinutes,value.seed,value.items,value.templateId,value.templateSummary,value.examInfo])
+      const comparable=(value:PaperRecord|undefined)=>value&&JSON.stringify([value.name,value.grade,value.totalScore,value.durationMinutes,value.seed,value.items.map(item=>({...item,snapshot:normalizeChoice(item.snapshot)})),value.templateId,value.templateSummary,value.examInfo])
       if (comparable(previous)!==comparable(paper)) throw new Error('此试卷已有考试记录，请另存为新试卷以保留原始答卷')
       return paper.id
     }
