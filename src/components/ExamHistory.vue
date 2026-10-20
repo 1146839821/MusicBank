@@ -5,11 +5,11 @@ import type {ExamSessionRecord,ExamAnswerRecord} from '../../electron/types'
 import {listExamSessions,reviewExamAnswer} from '../exam-store'
 import QuestionPrompt from './QuestionPrompt.vue'
 import MatchingQuestion from './MatchingQuestion.vue'
-import {matchingReference,matchingComplete} from '../../electron/matching'
+import {matchingReference} from '../../electron/matching'
 import QuestionText from './QuestionText.vue'
 import QuestionMedia from './QuestionMedia.vue'
 import {questionAttachments} from '../../electron/question-assets'
-import {judgmentLabel} from '../question-answers'
+import {judgmentLabel,questionAnswerComplete} from '../question-answers'
 const emit=defineEmits<{resume:[session:ExamSessionRecord]}>()
 const sessions=ref<ExamSessionRecord[]>([]),selected=ref<ExamSessionRecord|null>(null),error=ref(''),busy=ref(false),notice=ref('')
 const scores=ref<Record<number,string|number>>({}),comments=ref<Record<number,string>>({})
@@ -47,7 +47,7 @@ onMounted(load)
   <template v-else>
     <p v-if="!busy&&!sessions.length" class="history-summary">暂无考试记录。在模拟考试中开始一份试卷后，答题进度会自动保存。</p>
     <article v-for="session in sessions" :key="session.attempt.id" class="history-record">
-      <div><h3>{{session.paper.name}}</h3><p>考生：{{session.attempt.candidateName||'未填写姓名'}}</p><p>{{new Date(session.attempt.startedAt).toLocaleString('zh-CN')}} · {{session.attempt.status}}</p><p v-if="session.attempt.status==='已交卷'">{{total(session)}} / {{session.paper.totalScore}} 分 · {{pending(session)}} 道待批阅</p><p v-else>已答 {{session.answers.filter(answer=>{const item=session.paper.items.find(item=>item.position===answer.position);return item?.snapshot.type==='连线题'&&item.snapshot.matching?matchingComplete(answer.answer,item.snapshot.matching):answer.answer?.trim()}).length}} / {{session.paper.items.length}} 题 · 剩余 {{Math.floor(session.attempt.remainingSeconds/60)}} 分 {{session.attempt.remainingSeconds%60}} 秒</p></div>
+      <div><h3>{{session.paper.name}}</h3><p>考生：{{session.attempt.candidateName||'未填写姓名'}}</p><p>{{new Date(session.attempt.startedAt).toLocaleString('zh-CN')}} · {{session.attempt.status}}</p><p v-if="session.attempt.status==='已交卷'">{{total(session)}} / {{session.paper.totalScore}} 分 · {{pending(session)}} 道待批阅</p><p v-else>已答 {{session.answers.filter(answer=>{const item=session.paper.items.find(item=>item.position===answer.position);return item&&questionAnswerComplete(item.snapshot,answer.answer)}).length}} / {{session.paper.items.length}} 题 · 剩余 {{Math.floor(session.attempt.remainingSeconds/60)}} 分 {{session.attempt.remainingSeconds%60}} 秒</p></div>
       <button v-if="session.attempt.status==='进行中'" class="primary-button" :disabled="busy" @click="emit('resume',session)">继续考试</button><button v-else class="secondary-button" @click="open(session)">查看与批阅</button>
     </article>
   </template>
