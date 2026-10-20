@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import {formatFillAnswers} from '../../electron/fill-answers'
 import {onMounted,ref} from 'vue'
 import type {ExamSessionRecord,ExamAnswerRecord} from '../../electron/types'
 import {listExamSessions,reviewExamAnswer} from '../exam-store'
@@ -34,7 +35,7 @@ onMounted(load)
       <QuestionMedia :attachments="questionAttachments(item.snapshot)" />
       <p v-for="(option,index) in item.snapshot.type==='选择题'?(item.snapshot.options||[]):[]" :key="index">{{String.fromCharCode(65+index)}}. {{option}}</p>
       <p>学生答案：{{!answer(item.position)?.answer?'未作答':item.snapshot.type==='判断题'?judgmentLabel(answer(item.position)?.answer):answer(item.position)?.answer}}</p>
-      <p class="history-reference">参考答案：{{item.snapshot.type==='判断题'?judgmentLabel(item.snapshot.correctAnswer):item.snapshot.correctAnswer || item.snapshot.fillAnswers?.join('、') || item.snapshot.referenceAnswer || '未设置'}}</p>
+      <p class="history-reference">参考答案：{{item.snapshot.type==='判断题'?judgmentLabel(item.snapshot.correctAnswer):item.snapshot.type==='填空题'?formatFillAnswers(item.snapshot.fillAnswers):item.snapshot.correctAnswer || item.snapshot.referenceAnswer || '未设置'}}</p>
       <p v-if="item.snapshot.explanation">解析：{{item.snapshot.explanation}}</p>
       <div v-if="item.snapshot.type==='简答题'" class="history-grading"><label>评分（满分 {{item.score}}）<input v-model="scores[item.position]" type="number" min="0" :max="item.score" step="0.5" /></label><label>评语<input v-model="comments[item.position]" placeholder="选填" /></label><button class="primary-button" :disabled="busy" @click="grade(item.position)">保存评分</button></div>
       <p v-else>得分：{{answer(item.position)?.score??0}} / {{item.score}}</p>

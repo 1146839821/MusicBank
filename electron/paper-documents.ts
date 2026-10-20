@@ -1,3 +1,4 @@
+import {formatFillAnswers} from './fill-answers.js'
 import { questionAttachments } from './question-assets.js'
 import JSZip from 'jszip'
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom'
@@ -72,7 +73,7 @@ export async function inspectTemplate(bytes:Uint8Array):Promise<TemplateSummary>
 export function answerText(question:PaperRecord['items'][number]['snapshot']){
   if(question.type==='判断题')return question.correctAnswer==='true'?'正确（√）':question.correctAnswer==='false'?'错误（×）':'未设置答案'
   if(question.type==='选择题')return (question.correctAnswer||'未设置答案').replace(/,/g,'、')
-  if(question.type==='填空题')return (question.fillAnswers||[]).join('；')||'未设置答案'
+  if(question.type==='填空题')return formatFillAnswers(question.fillAnswers)
   return question.referenceAnswer||'未设置参考答案'
 }
 function paragraph(value:string,options:{bold?:boolean;size?:number;space?:number;keepNext?:boolean;runs?:TextRun[]}={}){

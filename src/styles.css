@@ -72,3 +72,5 @@
 @media(forced-colors:active){:root select:not([multiple]):not([size]){appearance:auto;background-image:none}}
 
 .exam-candidate-name{max-width:65%;min-width:0;overflow-wrap:anywhere;text-align:right}
+
+.fill-answer-editor-hint { color: var(--text-secondary, #747b86); font-size: 12px; line-height: 1.7; margin: 10px 0 0; }
