@@ -358,7 +358,12 @@ export class MusicBankDatabase {
   }
 
   deleteQuestion(id: string) {
-    this.db.prepare('DELETE FROM questions WHERE id = ?').run(id)
+    this.db.transaction(() => {
+      // Learning indexes refer to the live question; exams own independent snapshots.
+      this.db.prepare('DELETE FROM practice_records WHERE question_id = ?').run(id)
+      this.db.prepare('DELETE FROM wrong_questions WHERE question_id = ?').run(id)
+      this.db.prepare('DELETE FROM questions WHERE id = ?').run(id)
+    })()
   }
 
   savePaper(paper: PaperRecord) {

@@ -533,6 +533,9 @@ async function deleteQuestion(question: Question) {
     if (!await confirmDestructive(question.id)) { notify('已取消删除'); return }
     if (window.musicBank) await window.musicBank.questions.delete(question.id)
     questions.value = questions.value.filter((item) => item.id !== question.id)
+    wrongQuestionIds.value = wrongQuestionIds.value.filter(id => id !== question.id)
+    delete practiceResponses[question.id]
+    practiceDrafts.remove(question.id)
     if (currentSavedId.value === question.id) resetForm()
     notify(`已删除 ${question.id}`)
   } catch {
