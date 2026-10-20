@@ -16,6 +16,7 @@ import { judgmentLabel, judgmentCorrect } from './question-answers'
 import NotationEditor from './components/NotationEditor.vue'
 import {choiceOptions,choiceAnswerLetters,normalizeChoice, type ChoiceOption} from '../electron/choice-options'
 import ExamSetup from './components/ExamSetup.vue'
+import {quickExam} from './quick-exam'
 import CategoryManager from './components/CategoryManager.vue'
 import {defaultCategories,orderedCategories} from '../electron/category-catalog'
 import {listCategories} from './category-store'
@@ -755,7 +756,10 @@ async function startExam(confirmed=false) {
   if(examSaving.value)return
   stopExamTimer()
   if (!generatedPaper.value.length) {
-    generatedPaper.value = questions.value.filter((question) => question.status === '已发布').slice(0, 10).map((question) => ({ question, score: question.type === '选择题' ? 2 : question.type === '填空题' ? 3 : 10 }))
+    const paper = quickExam(questions.value)
+    if (!paper) return
+    generatedPaper.value = paper.items.map(item => ({question: item.snapshot, score: item.score}))
+    Object.assign(paperConfig, {name: paper.name, grade: paper.grade, totalScore: paper.totalScore, duration: paper.durationMinutes, seed: ''})
     activePaperId.value=null
   }
   if(!generatedPaper.value.length)return
