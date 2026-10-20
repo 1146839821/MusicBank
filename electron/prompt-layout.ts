@@ -13,6 +13,7 @@ export function promptLayout(text:string,runs:TextRun[]|undefined,grids:ImageGri
   const content=runs?.map(run=>run.text).join('')===text?runs:[{text}]
   const groups=new Map<number,ImageGridBlock[]>()
   for(const grid of grids){
+    if(!grid.items.length)continue
     const position=grid.afterParagraph===undefined?count:Math.min(count,Math.max(0,grid.afterParagraph))
     groups.set(position,[...groups.get(position)||[],grid])
   }

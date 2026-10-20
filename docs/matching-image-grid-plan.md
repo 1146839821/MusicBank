@@ -81,4 +81,6 @@ ImageGridBlock 新增可选 afterParagraph：0 表示题干开头，正整数表
 
 修改文件：electron/types.ts、image-grids.ts、prompt-layout.ts、paper-documents.ts；src/App.vue；src/components/QuestionPrompt.vue、ImageGrids.vue、PromptEditor.vue、ExamHistory.vue；tests/prompt-layout.test.ts、paper-documents.test.ts、matching-persistence.test.ts。
 
-本机 174 项测试、30 个测试文件、Vue/TypeScript 检查、前端和 Electron 构建全部通过。浏览器验收包括两段题干中插入图片网格、第一段加粗、保存重开恢复、六张实际图片的 Word 预览；布局不使用页面截图作为导出内容。旧版没有位置字段的题目保持原有末尾布局。
+本机 175 项测试、30 个测试文件、Vue/TypeScript 检查、前端和 Electron 构建全部通过。浏览器验收包括两段题干中插入图片网格、第一段加粗、保存重开恢复、六张实际图片的 Word 预览；布局不使用页面截图作为导出内容。旧版没有位置字段的题目保持原有末尾布局。
+
+补充验收：完整导出 HTML 含六张实际加载的图片，通过 Electron documentPdf 生成一页 A4 PDF，再用 Poppler 渲染检查，段落/网格/说明/连线空白区顺序正确，无裁切。四图匹配题在模拟考试中全部连对得到 4/4 分，考试记录恢复全部图片、段落顺序及四条连接。未上传图片的空网格在预览和导出时忽略，不生成空 Word 表格，草稿中的可编辑网格保留。

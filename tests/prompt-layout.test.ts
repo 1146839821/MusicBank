@@ -2,7 +2,7 @@ import {describe,expect,it} from 'vitest'
 import {promptLayout} from '../electron/prompt-layout'
 import {validateImageGrids} from '../electron/image-grids'
 import type {ImageGridBlock} from '../electron/types'
-const grid=(id:string,afterParagraph?:number):ImageGridBlock=>({id,kind:'image-grid',columns:2,imageHeight:160,fit:'contain',gap:12,align:'center',items:[],afterParagraph})
+const grid=(id:string,afterParagraph?:number):ImageGridBlock=>({id,kind:'image-grid',columns:2,imageHeight:160,fit:'contain',gap:12,align:'center',items:[{id:id+'-image',assetId:'asset',caption:''}],afterParagraph})
 const order=(text:string,grids:ImageGridBlock[])=>promptLayout(text,undefined,grids).map(block=>block.kind==='text'?block.text:block.grid.id)
 describe('structured prompt layout',()=>{
   it('keeps unanchored legacy grids at the end and does not split text unnecessarily',()=>{
@@ -31,6 +31,10 @@ describe('structured prompt layout',()=>{
     const grids=[grid('middle',1)],before=JSON.stringify(grids)
     promptLayout('第一段\n第二段',undefined,grids)
     expect(JSON.stringify(grids)).toBe(before)
+  })
+  it('omits unfinished empty grids so drafts do not create empty tables or split text',()=>{
+    const empty={...grid('empty',1),items:[]}
+    expect(order('第一段\n第二段',[empty])).toEqual(['第一段\n第二段'])
   })
   it('rejects malformed insertion positions at save/restore boundaries',()=>{
     for(const value of [-1,1.5,Infinity,NaN,100001])expect(()=>validateImageGrids([grid('invalid',value)])).toThrow('插入位置')
