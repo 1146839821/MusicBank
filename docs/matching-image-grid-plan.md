@@ -200,3 +200,10 @@ ImageGridBlock 新增可选 afterParagraph：0 表示题干开头，正整数表
 - 本机实际结果：40 张 PNG 测试图、4 页、两行短连线表格保持不拆分。独立 Poppler `pdfinfo` 确认 4 页；`pdftotext` 提取的图片编号严格为 1–40；首末页 PNG 渲染检查无截断、页眉页脚保留。
 - 临时验收 PDF：`/tmp/musicbank-real-image-pagination.pdf`；首末页渲染为 `/tmp/musicbank-real-image-pagination-first.png` 和 `/tmp/musicbank-real-image-pagination-last.png`。这些是程序生成的色块测试素材，不冒充教师实际乐器图片。
 - 可复现命令：先 `npm run build`，再 `npx electron scripts/native-pagination-smoke.cjs --pdf=/tmp/musicbank-pagination.pdf`（Windows 使用适合本机的输出路径）。不提供 `--pdf` 时仅验证内存中的 PDF，不留下测试文件。
+
+### 2026-10-21：最终构建和交付复核
+
+- Actions 39528342980（31a0418）已完成，macOS Intel、Apple silicon、Windows x64 三任务全部 success；逐步核对原生音频、图文网格/真实 PDF 分页、包内数据库，及 Windows 安装/卸载均 success。
+- 三个 artifact 已确认存在且未过期，名称分别为 musicbank-macos-intel、musicbank-macos-apple-silicon、musicbank-windows-x64。未创建 Release，未合并主分支。
+- 实际数据模型、迁移、录入/复制/练习/考试/历史/导出入口及要求矩阵已重新核对；最终汇总见 musicbank-enhancement-delivery.md。31a0418 之后仅文档变更，无实现代码变化。
+- 当前工作区通过 diff 检查，既有原生数据未重置。实体打印、Windows 图形向导与复杂自定义模板的人工检查仍未执行；这些边界明确保留，不宣称人工验收通过。
