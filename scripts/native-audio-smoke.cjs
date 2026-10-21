@@ -7,6 +7,8 @@ const deadline = setTimeout(() => { console.error('Native audio smoke test timed
 const root = process.cwd();
 protocol.registerSchemesAsPrivileged([{scheme:'musicbank-asset',privileges:{standard:true,secure:true,supportFetchAPI:true,stream:true}}]);
 app.commandLine.appendSwitch('autoplay-policy','no-user-gesture-required');
+// CI hosts need no physical sound device; Chromium still exercises decoding and playback.
+app.commandLine.appendSwitch('disable-audio-output');
 app.on('window-all-closed',()=>{});
 function wav(frequency) {
  const rate=8000,samples=rate*3,bytes=Buffer.alloc(44+samples*2);
@@ -29,7 +31,8 @@ app.whenReady().then(async()=>{
     const audio=document.createElement('audio');audio.controls=true;audio.src='musicbank-asset://'+id+'/';document.body.append(audio);
     await Promise.race([new Promise((resolve,reject)=>{audio.onloadedmetadata=resolve;audio.onerror=()=>reject(Error('metadata failed '+id));audio.load()}),new Promise((_,reject)=>setTimeout(()=>reject(Error('metadata timeout')),10000))]);
     if(Math.abs(audio.duration-3)>.05)throw Error('invalid duration '+audio.duration);
-    await audio.play();await new Promise(r=>setTimeout(r,200));if(audio.paused||audio.currentTime<=0)throw Error('playback did not advance');
+    await audio.play();
+    await new Promise((resolve,reject)=>{const started=Date.now();const poll=()=>{if(!audio.paused&&audio.currentTime>0)return resolve();if(Date.now()-started>5000)return reject(Error('playback did not advance'));setTimeout(poll,50)};poll()});
     audio.pause();audio.currentTime=2;await new Promise((resolve,reject)=>{audio.onseeked=resolve;setTimeout(()=>reject(Error('seek timeout')),5000)});
     if(Math.abs(audio.currentTime-2)>.1)throw Error('seek failed');players.push(audio);
    }
