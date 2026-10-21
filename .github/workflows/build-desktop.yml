@@ -9,6 +9,7 @@ on:
       - 'scripts/verify-package.mjs'
       - 'scripts/package-smoke.cjs'
       - 'scripts/native-audio-smoke.cjs'
+      - 'scripts/native-pagination-smoke.cjs'
       - 'scripts/verify-windows-installer.ps1'
       - 'package.json'
       - 'package-lock.json'
@@ -68,6 +69,9 @@ jobs:
 
       - name: Verify native audio decoding, playback and seeking
         run: npx electron scripts/native-audio-smoke.cjs
+
+      - name: Verify image-grid pagination in Chromium
+        run: npx electron scripts/native-pagination-smoke.cjs
 
       - name: Package desktop application
         run: npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never
