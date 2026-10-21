@@ -152,3 +152,11 @@ ImageGridBlock 新增可选 afterParagraph：0 表示题干开头，正整数表
 - 修正 ImageGrids.vue：完整显示时根据 align 设置图片 object-position，左/中/右与说明一致；裁剪铺满保持居中裁剪，沿用 Word 的居中裁剪方式。无需数据迁移。
 - 浏览器实际操作控件及预览验证：左对齐为 0% 50%，右对齐为 100% 50%，裁剪铺满为 50% 50%；两张已加载图片均生效。验收后恢复原编辑参数，没有改写题目数据。
 - 189 项测试、TypeScript、生产构建和 diff 检查通过；未对单条样式添加重复实现的测试。
+
+### 2026-10-21 WebP 桌面导出修复
+
+- 实际 Electron 复现：nativeImage 对 120×80 WebP 返回空图片，而同尺寸 JPEG 可读取。浏览器可显示 WebP，因此原问题只在桌面 Word 导出阶段暴露。
+- 新增 `electron/document-images.ts`：PNG/JPEG 沿用原生解码；原生无法读取时，使用隔离的隐藏 Chromium 窗口解码为 PNG。窗口无 Node 权限、sandbox/contextIsolation 开启、权限拒绝、网络仅允许 data，脚本为应用固定代码，图片以 base64 数据传入；有超时、尺寸检查及 finally 销毁。
+- document-handlers 的图片解析改为共用转换函数。已有 WebP 资源仍保存原文件和资源 ID，只在导出时转换，不要求重新插入，也不改变历史快照。
+- 新增 document-images.test.ts，覆盖原生路径、转换路径、隔离配置、失败清理及非法尺寸/输出拒绝；195 项测试、TypeScript、生产构建与 diff 检查通过。
+- 本机真实 Electron 验证 WebP/JPEG 均转换为 120×80 PNG、损坏文件拒绝；真实生成 `/tmp/musicbank-webp-jpeg-export.docx`，检查连线题两张图片都嵌入为有效 PNG。测试原始文件及文档均在临时目录，不接触应用题库。

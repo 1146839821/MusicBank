@@ -1,7 +1,8 @@
-import { app, dialog, ipcMain, nativeImage } from 'electron'
+import { app, dialog, ipcMain } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
+import {documentImage} from './document-images.js'
 import { buildPaperDocument, inspectTemplate } from './paper-documents.js'
 import type { MusicBankDatabase } from './db.js'
 import { withDocumentWindow, documentPdf } from './document-window.js'
@@ -24,9 +25,7 @@ export function registerDocumentHandlers(database:MusicBankDatabase){
     const bytes=await buildPaperDocument(database.templateBytes(paper.templateId),paper,kind,async id=>{
       const asset=database.findAsset(id)
       if(!asset||asset.assetType!=='image')throw new Error('试卷图片缺失，请检查题目素材')
-      const image=nativeImage.createFromBuffer(readFileSync(join(database.imagePath,basename(asset.storedName))))
-      if(image.isEmpty())throw new Error('试卷图片格式无法识别')
-      return {bytes:image.toPNG(),...image.getSize()}
+      return documentImage(readFileSync(join(database.imagePath,basename(asset.storedName))))
     })
     return {paper,bytes}
   }
