@@ -145,3 +145,10 @@ ImageGridBlock 新增可选 afterParagraph：0 表示题干开头，正整数表
 - Windows job `118941716281` 日志确认：`MusicBank Windows install, installed database, shortcuts, uninstall registration, uninstall and user-data retention passed.`
 - Windows 安装程序已在临时 runner 实际静默安装到带空格路径，从安装后的程序运行数据库测试，再实际卸载；应用文件、快捷方式、卸载登记清除，测试用户数据哨兵保留。并非只在 win-unpacked 目录模拟检查。
 - 验收表据此更新，人工向导/图形窗口、实体打印及教学素材校对仍单列待验证。此文档更新不改变上述受测实现提交。
+
+### 2026-10-21 图文网格图片对齐一致性
+
+- 审查发现图文网格的 align 只改变说明文字，浏览器 object-fit:contain 的图片仍默认居中；Word 原生图片段落已应用对应对齐。
+- 修正 ImageGrids.vue：完整显示时根据 align 设置图片 object-position，左/中/右与说明一致；裁剪铺满保持居中裁剪，沿用 Word 的居中裁剪方式。无需数据迁移。
+- 浏览器实际操作控件及预览验证：左对齐为 0% 50%，右对齐为 100% 50%，裁剪铺满为 50% 50%；两张已加载图片均生效。验收后恢复原编辑参数，没有改写题目数据。
+- 189 项测试、TypeScript、生产构建和 diff 检查通过；未对单条样式添加重复实现的测试。
