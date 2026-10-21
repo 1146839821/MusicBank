@@ -160,3 +160,10 @@ ImageGridBlock 新增可选 afterParagraph：0 表示题干开头，正整数表
 - document-handlers 的图片解析改为共用转换函数。已有 WebP 资源仍保存原文件和资源 ID，只在导出时转换，不要求重新插入，也不改变历史快照。
 - 新增 document-images.test.ts，覆盖原生路径、转换路径、隔离配置、失败清理及非法尺寸/输出拒绝；195 项测试、TypeScript、生产构建与 diff 检查通过。
 - 本机真实 Electron 验证 WebP/JPEG 均转换为 120×80 PNG、损坏文件拒绝；真实生成 `/tmp/musicbank-webp-jpeg-export.docx`，检查连线题两张图片都嵌入为有效 PNG。测试原始文件及文档均在临时目录，不接触应用题库。
+
+### 2026-10-21：原生多音频运行检查
+
+- 阅读 `QuestionMedia.vue`、`media-store.ts`、附件保存及原生资源响应实现：时长回写为原位更新，附件监听不使用深度监听，因此不会因加载时长重新创建播放器；切题或组件销毁会暂停旧音频并释放浏览器 URL。
+- 新增 `scripts/native-audio-smoke.cjs`，生成两份不同频率的真实三秒 PCM WAV，通过实际 `musicbank-asset` 协议及生产 `assetResponse` 读取，在 Electron 沙盒 renderer 中验证两份文件的 metadata、播放时间推进、暂停及 seek 到第二秒。静音执行，不读写用户题库；临时资源在 finally 中删除。
+- 本机 Apple silicon Electron 运行通过，两份结果均为 duration=3、currentTime=2、paused=true、error=null。它验证原生解码及协议链路，不替代附件录入/保存的数据库测试或人工听音。
+- 三平台构建新增同项检查，构建超时保护为 30 秒。新增检查的远程结果以对应 Actions 最终状态为准。

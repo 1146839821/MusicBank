@@ -8,6 +8,7 @@ on:
       - '.github/workflows/build-desktop.yml'
       - 'scripts/verify-package.mjs'
       - 'scripts/package-smoke.cjs'
+      - 'scripts/native-audio-smoke.cjs'
       - 'scripts/verify-windows-installer.ps1'
       - 'package.json'
       - 'package-lock.json'
@@ -64,6 +65,9 @@ jobs:
 
       - name: Build renderer and Electron main process
         run: npm run build
+
+      - name: Verify native audio decoding, playback and seeking
+        run: npx electron scripts/native-audio-smoke.cjs
 
       - name: Package desktop application
         run: npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never
