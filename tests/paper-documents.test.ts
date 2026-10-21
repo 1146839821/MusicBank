@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import JSZip from 'jszip'
+import {DOMParser} from '@xmldom/xmldom'
 import { inspectTemplate, buildPaperDocument, answerText } from '../electron/paper-documents'
 import { generatePaperPlan, type PaperPlan } from '../electron/paper-plan'
 import { judgmentCorrect } from '../src/question-answers'
@@ -12,6 +13,21 @@ const question=(type:QuestionRecord['type'],id=type):QuestionRecord=>({id,title:
 function paper():PaperRecord{return {id:'paper',name:'音乐期末考试',grade:'六年级',totalScore:8,durationMinutes:40,examInfo:{school:'实验小学',schoolYear:'2026学年',term:'第一学期',subject:'音乐',examDate:'2026-12-01',instructions:'认真作答'},items:([ '填空题','选择题','判断题','简答题'] as const).map((type,index)=>({position:index+1,questionId:type,score:2,snapshot:question(type)}))}}
 async function xml(bytes:Uint8Array){return (await JSZip.loadAsync(bytes)).file('word/document.xml')!.async('string')}
 describe('real Word exam templates',()=>{
+  it('keeps matching image and name rows together without binding the next question',async()=>{
+    const q=question('连线题')
+    q.matching={version:1,scoring:'per-pair',sources:[0,1,2,3].map(order=>({id:'s'+order,order,contentType:'image',assetId:'image-'+order,text:''})),targets:['二胡','琵琶','竹笛','小提琴'].map((text,order)=>({id:'t'+order,order,contentType:'text',text})),pairs:[0,1,2,3].map(index=>({sourceId:'s'+index,targetId:'t'+index})),targetOrder:['t2','t0','t3','t1']}
+    const exam={...paper(),items:[{position:1,questionId:q.id,score:4,snapshot:q}],totalScore:4}
+    const content=await xml(await buildPaperDocument(await template(),exam,'paper',async()=>({bytes:new Uint8Array([1,2,3]),width:200,height:200})))
+    const document=new DOMParser().parseFromString(content,'application/xml'),ns='http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    const rows=Array.from(document.getElementsByTagNameNS(ns,'tr'))
+    expect(rows).toHaveLength(3)
+    for(const row of rows.slice(0,-1))for(const paragraph of Array.from(row.getElementsByTagNameNS(ns,'p')))expect(paragraph.getElementsByTagNameNS(ns,'keepNext')).toHaveLength(1)
+    expect(rows[2].getElementsByTagNameNS(ns,'keepNext')).toHaveLength(0)
+    expect(rows.every(row=>row.getElementsByTagNameNS(ns,'cantSplit').length===1)).toBe(true)
+    expect(content).not.toContain('1 →')
+    expect(content).toContain('A. 竹笛')
+  })
+
   it('provides a choice answer blank and 19pt body leading while preserving bold and italic text',async()=>{
     const exam=paper(),q=exam.items[1].snapshot
     q.titleRuns=[{text:'选择题',bold:true},{text:'测试题',italic:true}]

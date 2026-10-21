@@ -134,9 +134,19 @@ export async function buildPaperDocument(bytes:Uint8Array,paper:PaperRecord,kind
       const finalWidth=fit==='cover'?Math.round(maxWidth):cx,finalHeight=fit==='cover'?Math.round(boxHeight):cy
       return `<w:p><w:pPr><w:jc w:val="${align}"/><w:spacing w:before="80" w:after="80"/></w:pPr><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="${finalWidth}" cy="${finalHeight}"/><wp:docPr id="${10000+imageCounter}" name="题目图片 ${imageCounter}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="0" name="${name}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${id}"/><a:srcRect l="${cropX}" r="${cropX}" t="${cropY}" b="${cropY}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${finalWidth}" cy="${finalHeight}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`
   }
-  function table(rows:string[][],columns:number,gap=12){
+  function table(rows:string[][],columns:number,gap=12,keepTogether=false){
     const width=Math.floor(pageWidth/635),cellWidth=Math.floor(width/columns),margin=Math.round(gap*15/2)
-    return `<w:tbl><w:tblPr><w:tblW w:w="${width}" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:tblCellMar><w:left w:w="${margin}" w:type="dxa"/><w:right w:w="${margin}" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>${Array.from({length:columns},()=>`<w:gridCol w:w="${cellWidth}"/>`).join('')}</w:tblGrid>${rows.map(row=>`<w:tr><w:trPr><w:cantSplit/></w:trPr>${Array.from({length:columns},(_,index)=>`<w:tc><w:tcPr><w:tcW w:w="${cellWidth}" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>${row[index]||paragraph('')}</w:tc>`).join('')}</w:tr>`).join('')}</w:tbl>`
+    const rowXml=rows.map((row,rowIndex)=>{
+      const cells=Array.from({length:columns},(_,index)=>{
+        let content=row[index]||paragraph('')
+        // Bind matching rows to each other, but let the next question paginate independently.
+        if(keepTogether&&rowIndex<rows.length-1)content=content.replace(/<w:pPr>/g,'<w:pPr><w:keepNext/>')
+        return `<w:tc><w:tcPr><w:tcW w:w="${cellWidth}" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>${content}</w:tc>`
+      }).join('')
+      return `<w:tr><w:trPr><w:cantSplit/></w:trPr>${cells}</w:tr>`
+    }).join('')
+    const grid=Array.from({length:columns},()=>`<w:gridCol w:w="${cellWidth}"/>`).join('')
+    return `<w:tbl><w:tblPr><w:tblW w:w="${width}" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:tblCellMar><w:left w:w="${margin}" w:type="dxa"/><w:right w:w="${margin}" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>${grid}</w:tblGrid>${rowXml}</w:tbl>`
   }
   async function gridsXml(grids:ImageGridBlock[]){
     let result=''
@@ -152,7 +162,7 @@ export async function buildPaperDocument(bytes:Uint8Array,paper:PaperRecord,kind
     for(let index=0;index<sources.length;index+=columns)rows.push(sourceCells.slice(index,index+columns))
     rows.push(Array.from({length:columns},()=>paragraph('\n\n',{space:0})))
     for(let index=0;index<targetCells.length;index+=columns)rows.push(targetCells.slice(index,index+columns))
-    return table(rows,columns)+paragraph('请将上方项目与下方名称连线。',{size:20})
+    return table(rows,columns,12,true)+paragraph('请将上方项目与下方名称连线。',{size:20})
   }
   async function questionXml(item:PaperRecord['items'][number]){
     const q=item.snapshot;validateImageGrids(q.imageGrids);if(q.type==='连线题')validateMatching(q.matching!);const label=`${item.position}. `
