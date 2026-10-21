@@ -192,3 +192,11 @@ ImageGridBlock 新增可选 afterParagraph：0 表示题干开头，正整数表
 - 原生分页检查、本地 196 项单元测试、类型检查、构建及 diff 检查均通过。新增原生检查接入三平台 CI。
 - 音频修正提交 d67cf4c 对应 Actions 39527133275 的 macOS Intel、Apple silicon、Windows x64 最终全部成功；音频检查、打包验证及 Windows 安装/卸载均通过。该结果不覆盖此后的 Word 连续排版及本次网格分页提交，需重新构建。
 - 边界：单个表格行若本身高于整页，不能在不切断图片的前提下继续拆行；本次保留整行，不声称覆盖任意超长说明。
+
+### 2026-10-21：分页 PDF 输出独立验证
+
+- 加强原生分页回归：单元格现包含真实 PNG 测试图，等待图片解码后分页；测试页眉/页脚采用绝对定位，模拟 Word 页面边距。
+- 脚本随后调用生产 `documentPdf` 路径生成真实 PDF，检查当前 Skia 受控测试文件的页面字典数与已测分页数量一致。该检查针对本测试输出，不作为通用 PDF 解析器使用。
+- 本机实际结果：40 张 PNG 测试图、4 页、两行短连线表格保持不拆分。独立 Poppler `pdfinfo` 确认 4 页；`pdftotext` 提取的图片编号严格为 1–40；首末页 PNG 渲染检查无截断、页眉页脚保留。
+- 临时验收 PDF：`/tmp/musicbank-real-image-pagination.pdf`；首末页渲染为 `/tmp/musicbank-real-image-pagination-first.png` 和 `/tmp/musicbank-real-image-pagination-last.png`。这些是程序生成的色块测试素材，不冒充教师实际乐器图片。
+- 可复现命令：先 `npm run build`，再 `npx electron scripts/native-pagination-smoke.cjs --pdf=/tmp/musicbank-pagination.pdf`（Windows 使用适合本机的输出路径）。不提供 `--pdf` 时仅验证内存中的 PDF，不留下测试文件。
