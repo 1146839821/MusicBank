@@ -28,3 +28,12 @@ export function formatFillAnswers(answers: string[] = []): string {
   const groups = fillAnswerGroups(answers)
   return groups.map((group, index) => `${groups.length > 1 ? `第${index + 1}空：` : ''}${group.join(' / ')}`).join('；') || '未设置答案'
 }
+
+/** Keep blank positions visible in historical answers, including skipped blanks. */
+export function formatFillResponse(response: string | undefined, count: number): string {
+  const values = (response ?? '').split(/\r?\n/)
+  const length = Math.max(1, Number.isSafeInteger(count) && count > 0 ? count : 1, values.length)
+  return Array.from({ length }, (_, index) =>
+    `第${index + 1}空：${values[index]?.trim() || '未作答'}`,
+  ).join('；')
+}

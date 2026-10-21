@@ -1,3 +1,5 @@
+import {validateMatching,validateMatchingAnswer} from './matching.js'
+import {validateImageGrids} from './image-grids.js'
 import {candidateName} from './exam-identity.js'
 import {validateCategories} from './category-catalog.js'
 import type {BackupPayload} from './types.js'
@@ -10,6 +12,7 @@ export function validateLearningBackup(payload:BackupPayload) {
   const text=(value:unknown)=>typeof value==='string'&&value.length>0
   if(payload.questions.some(question=>!question||!text(question.id)) || new Set(payload.questions.map(question=>question.id)).size!==payload.questions.length)invalid('试题编号缺失或重复')
   if(payload.papers.some(paper=>!paper||!text(paper.id)) || new Set(payload.papers.map(paper=>paper.id)).size!==payload.papers.length)invalid('试卷编号缺失或重复')
+  for(const question of [...payload.questions,...payload.papers.flatMap(paper=>paper.items.map(item=>item.snapshot))]){validateImageGrids(question.imageGrids);if(question.type==='连线题')validateMatching(question.matching!)}
   const questionIds=new Set(payload.questions.map(question=>question.id))
   const papers=new Map(payload.papers.map(paper=>[paper.id,paper]))
   if(payload.exams!==undefined){
@@ -30,6 +33,7 @@ export function validateLearningBackup(payload:BackupPayload) {
         const item=paper!.items.find(item=>item.position===answer?.position)
         if(!answer||answer.attemptId!==attempt.id||!Number.isSafeInteger(answer.position)||!item||positions.has(answer.position))invalid('答卷题号或关联')
         positions.add(answer.position)
+        if(item!.snapshot.type==='连线题'&&item!.snapshot.matching)validateMatchingAnswer(answer.answer,item!.snapshot.matching)
         if(answer.answer!==undefined&&typeof answer.answer!=='string')invalid('学生答案')
         if(answer.comment!==undefined&&typeof answer.comment!=='string')invalid('评语')
         if(answer.reviewStatus!==undefined&&!['已评分','待批阅'].includes(answer.reviewStatus))invalid('批阅状态')

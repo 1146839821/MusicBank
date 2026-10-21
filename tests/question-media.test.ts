@@ -50,7 +50,7 @@ describe('owned multi-file question media',()=>{
       raw.pragma('foreign_keys = ON')
       expect(()=>raw.prepare('DELETE FROM assets WHERE id=?').run('image')).toThrow()
       raw.prepare('DELETE FROM paper_asset_refs').run()
-      raw.prepare('DELETE FROM system_settings WHERE key=?').run('migration.paper-asset-references.v1')
+      raw.prepare('DELETE FROM system_settings WHERE key=?').run('migration.paper-asset-references.v2')
       raw.close();db.close();db=new MusicBankDatabase(root)
       const migrated=new Database(db.databasePath)
       try{expect(migrated.prepare('SELECT asset_id FROM paper_asset_refs WHERE paper_id=?').all('protected')).toEqual([{asset_id:'image'}])}finally{migrated.close()}

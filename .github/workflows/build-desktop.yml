@@ -7,6 +7,10 @@ on:
     paths:
       - '.github/workflows/build-desktop.yml'
       - 'scripts/verify-package.mjs'
+      - 'scripts/package-smoke.cjs'
+      - 'scripts/native-audio-smoke.cjs'
+      - 'scripts/native-pagination-smoke.cjs'
+      - 'scripts/verify-windows-installer.ps1'
       - 'package.json'
       - 'package-lock.json'
     tags:
@@ -63,11 +67,22 @@ jobs:
       - name: Build renderer and Electron main process
         run: npm run build
 
+      - name: Verify native audio decoding, playback and seeking
+        run: npx electron scripts/native-audio-smoke.cjs
+
+      - name: Verify image-grid pagination in Chromium
+        run: npx electron scripts/native-pagination-smoke.cjs
+
       - name: Package desktop application
         run: npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never
 
-      - name: Verify packaged contents and native SQLite read/write
+      - name: Verify packaged contents, database initialization and exam persistence
         run: node scripts/verify-package.mjs ${{ matrix.platform }} ${{ matrix.arch }} --smoke
+
+      - name: Verify Windows installation, installed database and uninstall
+        if: matrix.platform == 'win'
+        shell: pwsh
+        run: ./scripts/verify-windows-installer.ps1
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4

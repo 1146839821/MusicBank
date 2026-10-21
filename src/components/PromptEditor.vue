@@ -23,6 +23,15 @@ function read() {
 function state() { bold.value = document.queryCommandState('bold'); italic.value = document.queryCommandState('italic') }
 function command(name: string) { editor.value?.focus(); document.execCommand(name); read() }
 function paste(event: ClipboardEvent) { event.preventDefault(); document.execCommand('insertText', false, event.clipboardData?.getData('text/plain') || ''); read() }
+function insertionParagraph(){
+  const root=editor.value,selection=window.getSelection()
+  if(!root||!selection?.rangeCount||!root.contains(selection.anchorNode))return undefined
+  const range=selection.getRangeAt(0).cloneRange()
+  range.selectNodeContents(root)
+  range.setEnd(selection.anchorNode!,selection.anchorOffset)
+  return readPromptContent(range.cloneContents()).text.split('\n').length
+}
+defineExpose({insertionParagraph})
 watch(() => [props.text, props.runs], sync, {deep:true, flush:'post'})
 onMounted(sync)
 </script>

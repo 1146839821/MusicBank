@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { listPackage, extractFile } from '@electron/asar'
 
@@ -12,7 +13,7 @@ const folder = platform === 'mac'
   : join('release', arch === 'x64' ? 'win-unpacked' : `win-${arch}-unpacked`, 'resources')
 const archive = join(folder, 'app.asar')
 const files = listPackage(archive).map(file => file.replaceAll('\\', '/'))
-for (const file of ['dist/index.html', 'dist-electron/main.js', 'dist-electron/preload.cjs', 'dist/templates/试卷模板.docx']) {
+for (const file of ['dist/index.html', 'dist-electron/main.js', 'dist-electron/db.js', 'dist-electron/preload.cjs', 'dist/templates/试卷模板.docx']) {
   if (!files.includes(`/${file}`) || !extractFile(archive, join(...file.split('/'))).length) throw new Error(`Missing packaged file: ${file}`)
 }
 for (const file of ['node_modules/better-sqlite3/package.json', 'node_modules/better-sqlite3/lib/index.js']) {
@@ -40,7 +41,13 @@ if (process.argv.includes('--smoke')) {
   if (result.error || result.status !== 0 || !result.stdout?.includes('musicbank-package-ok')) {
     throw new Error(`Packaged SQLite smoke test failed: ${result.error || result.stderr || result.stdout || result.status}`)
   }
-  console.log(`Packaged ${platform} ${arch} SQLite read/write passed.`)
+  const application = spawnSync(executable, [fileURLToPath(new URL('./package-smoke.cjs', import.meta.url)), resolve(archive)], {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, encoding: 'utf8', timeout: 30000,
+  })
+  if (application.error || application.status !== 0 || !application.stdout?.includes('musicbank-application-db-ok')) {
+    throw new Error(`Packaged application database smoke test failed: ${application.error || application.stderr || application.stdout || application.status}`)
+  }
+  console.log(`Packaged ${platform} ${arch} SQLite and application database round trips passed.`)
 }
 if (!existsSync(join(folder, 'musicbank.png'))) throw new Error('Missing application icon')
 const userData = files.filter(file => !file.startsWith('/node_modules/') && (

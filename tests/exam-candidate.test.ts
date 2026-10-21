@@ -44,7 +44,7 @@ describe('optional exam candidate identity',()=>{
   const values=new Map<string,string>();vi.stubGlobal('window',{});vi.stubGlobal('localStorage',{getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value)})
   await saveExamProgress(attempt(' 小明 '),paper)
   await expect(saveExamProgress(attempt('小红'),paper)).rejects.toThrow('身份')
-  await finishExam({...attempt('小红'),status:'已交卷',submittedAt:'2026-10-20T01:05:00Z'},[])
+  await finishExam({...attempt('小红'),status:'已交卷',submittedAt:'2026-10-20T01:05:00Z'},[{attemptId:'attempt',position:1,answer:'',reviewStatus:'待批阅'}])
   expect((await listExamSessions())[0].attempt).toMatchObject({candidateName:'小明',status:'已交卷'})
  })
  it('preserves full paper metadata through browser progress, resume and submission',async()=>{

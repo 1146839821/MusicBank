@@ -1,5 +1,5 @@
 export interface TextRun { text: string; bold?: boolean; italic?: boolean }
-export type QuestionType = '选择题' | '填空题' | '判断题' | '简答题'
+export type QuestionType = '选择题' | '填空题' | '判断题' | '简答题' | '连线题'
 export type ChoiceMode = 'single' | 'multiple'
 
 export interface UserProfile {
@@ -10,7 +10,14 @@ export interface UserProfile {
 
 export interface QuestionAttachment { id: string; assetType: 'image' | 'audio'; name: string; duration?: string; notationDocument?: string }
 
+export interface MatchingItem { id:string; contentType:'text'|'image'; text:string; assetId?:string; order:number }
+export interface MatchingPair { sourceId:string; targetId:string }
+export interface MatchingData { version:1; sources:MatchingItem[]; targets:MatchingItem[]; pairs:MatchingPair[]; scoring:'per-pair'|'all-or-nothing'; targetOrder?:string[] }
+export interface ImageGridItem { id:string; assetId:string; caption:string }
+export interface ImageGridBlock { id:string; kind:'image-grid'; columns:2|3|4; imageHeight:number; fit:'contain'|'cover'; gap:number; align:'start'|'center'|'end'; items:ImageGridItem[]; afterParagraph?:number }
 export interface QuestionRecord {
+  imageGrids?:ImageGridBlock[]
+  matching?:MatchingData
   attachments?: QuestionAttachment[]
   id: string
   title: string

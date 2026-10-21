@@ -7,3 +7,11 @@ export function questionAttachments(question: Pick<QuestionRecord,'attachments'|
   if (question.audioAssetId) result.push({id:question.audioAssetId,assetType:'audio',name:question.audioName || '音乐片段',duration:question.audioDuration})
   return result
 }
+
+/** All resource references, including structured nodes; keep standalone media display separate. */
+export function questionAssets(question:QuestionRecord):QuestionAttachment[]{
+  const refs=questionAttachments(question).map(item=>({...item}))
+  for(const grid of question.imageGrids||[])for(const item of grid.items)refs.push({id:item.assetId,assetType:'image',name:item.caption||'图文图片'})
+  for(const item of [...question.matching?.sources||[],...question.matching?.targets||[]])if(item.assetId)refs.push({id:item.assetId,assetType:'image',name:item.text||'连线图片'})
+  return [...new Map(refs.map(item=>[item.id,item])).values()]
+}

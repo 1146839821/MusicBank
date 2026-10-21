@@ -1,0 +1,209 @@
+# 图文网格与连线题实施审查
+
+## 实施前保护
+
+开发分支：codex/matching-image-grid，基于 b309190。
+本机应用数据已备份到用户 Documents/MusicBank Backups/pre-matching-20261020-233317；SQLite 完整性检查 ok。该原生数据目录现有题目、试卷、考试记录均为 0；浏览器开发数据与原生数据分开存储。不得重置数据库。
+
+## 实际代码审查
+
+|关键文件|当前机制|扩展风险及处理|
+|---|---|---|
+|src/components/PromptEditor.vue、src/prompt-content.ts|自定义 contenteditable，保存 text 与 bold/italic TextRun；不是 Tiptap，粘贴纯文本|保留已验证编辑器，增加结构化图文节点，不写任意 HTML 或绝对路径|
+|src/media-store.ts、electron/main.ts、QuestionMedia.vue|原生资源复制到应用数据目录，浏览器 IndexedDB；附件数组，多图片/audio controls，自定义协议支持音频范围请求|图文及连线图片必须纳入同一资源引用；避免再次作为独立附件重复显示|
+|NotationEditor.vue、src/notation/*|结构化乐谱源稿、SVG 转 PNG 后资源入库|保持独立编辑器，不替换或集成上游整个项目|
+|electron/types.ts、electron/db.ts|四题型，JSON 选项/附件/格式片段，SQLite CHECK 限制题型|增加连线题及 JSON 字段；事务重建 CHECK，保留所有列、索引及外键关系|
+|src/question-copy.ts、App.vue|深拷贝复制题目，录入及答题逻辑集中在 App|新字段必须贯穿打开、保存、复制、预览、筛选，避免遗漏|
+|electron/paper-plan.ts、src/quick-exam.ts|按题型参数及种子抽题，完整题目深拷贝快照|目标显示顺序在生成快照时确定并保存；正确关系始终使用 ID|
+|electron/db.ts|paper_items 快照、paper_asset_refs；已有考试时禁止覆盖试卷|扩展引用收集器保护网格与连线图片；新增引用回填版本|
+|electron/paper-documents.ts、ExamDocuments.vue|操作真实 Word XML，保留模板布局；docx-preview 后打印/PDF|使用 Word 表格和内嵌图片排版，不截图替代；预留连线空间，答案输出编号映射|
+|App.vue、exam-store.ts、ExamHistory.vue|字符串答卷，原生 SQLite/浏览器存储；客观自动评分、简答人工评分|匹配答卷以版本化 JSON 存储，统一验证和判分；所有入口使用共享逻辑|
+|create-backup.ts、restore-backup.ts、learning-backup.ts|包含资源、题目、试卷及学习记录；恢复前验证、暂存及回滚|新增结构校验并保留旧版备份兼容；错误结构不能覆盖数据|
+
+潜在问题：旧迁移 ALTER 捕获所有错误，不能作为新迁移范式；新增迁移应显式检查列。现有模板仅认识四题型，需兼容新增连线区域。现有资源导出按整行图片处理，需新增结构化表格排版。渲染器的资源类型/大小校验不能替代原生边界校验。
+
+## 数据设计
+
+- ImageGridBlock：稳定 id、columns(2/3/4)、imageHeight、fit(contain/cover)、gap、align、items(id/assetId/caption)。资源只保存 ID。
+- MatchingItem：id/contentType/text/assetId/order。
+- MatchingPair：sourceId/targetId。
+- MatchingData：version、sources、targets、pairs、scoring(per-pair/all-or-nothing)、targetOrder。展示乱序与答案关系分离。
+- 学生答案：版本化匹配关系 JSON，存入兼容现有 answer 字段；拒绝重复 source/target 和未知 ID。
+- 分值：以整数百分之一分分配，余数按标准项目顺序分配，保证全对等于满分且总分精确。
+
+## 分阶段实施及验证
+
+1. 类型、结构校验、共享匹配算法、整数评分及单元测试；向前迁移及旧数据保留测试。
+2. 图文网格组件：列数、显示方式、高度、间距、对齐、文字、替换/删除、多图、拖动及键盘排序；结构保存/恢复。
+3. 连线题教师录入：图片与名称、稳定 ID、一对一标准关系、评分规则、编辑及复制。
+4. MatchingQuestion：上图片下文字、SVG 线、选择/取消/重新连接/清空、键盘及窗口尺寸响应。
+5. 接入列表、预览、顺序/专项练习、随机组卷、考试、记录、错题及部分得分；未完成状态识别。
+6. 快照及资源保护、备份恢复验证，生成时保存展示顺序。
+7. Word 原生表格布局、答案编号映射，PDF/打印复用文档布局，模板兼容。
+8. 每个阶段运行类型检查、构建和相关测试；最终全量回归及浏览器操作验收、三平台构建检查。
+
+回归范围：原四题型、图片音频、四组连线保存重开、连接取消与乱序、部分正确计分、随机组卷、快照不变、Word/PDF、旧题编辑不丢数据、Windows/macOS 构建。任何未实际验证的项目在最终报告明确列出。
+
+## 实施结果（2026-10-21）
+
+已接入上述全部功能入口。新增 `electron/matching.ts` 和 `electron/image-grids.ts` 作为数据校验边界；新增 `AssetImage.vue`、`ImageGrids.vue`、`MatchingEditor.vue`、`MatchingQuestion.vue`。现有编辑器仍保存纯文本与格式片段，图文网格保存独立结构化块并随题干渲染，不存任意 HTML；不是 Tiptap 节点。后续增强已支持按段落定位，详见下文。
+
+数据库迁移版本 2026102001：显式检查后添加 matching_json / image_grids_json；事务扩充题型 CHECK，复制全部旧列、恢复原索引并检查外键。历史试卷资源引用执行 v2 回填。备份格式仍为兼容的版本 1，新增结构在恢复覆盖前校验。历史试卷完整快照不随原题编辑/删除而改变。
+
+已执行：166 项测试、29 个测试文件全部通过；Vue/TypeScript 检查、Vite 与 Electron 构建通过；git diff --check 通过。测试覆盖旧题型、媒体、复制、迁移、学习历史、快照/资源约束、恢复、乱序、部分得分与整数精度、Word 原生图片表格和答案映射。
+
+浏览器验收：四张图片连线题保存重开；图文网格列数、文字和顺序恢复；真实 Word 预览保留网格和图片；鼠标连接/取消、键盘连接、切题保留；未完成提交提示；两组正确得 2/4 分且历史记录恢复两条连接。图片使用项目内 PNG 测试素材，名称使用四种乐器。另以文字项目独立复测完整判分流程。
+
+PDF 验收：从实际 docx-preview 排版 DOM 调用 Electron 原生 documentPdf，生成一页 A4 PDF，Poppler 渲染后检查项目对齐、文字和连线空白区，无裁切重叠。未实际连接实体打印机；Windows 安装/卸载人工操作不属于本机可验证范围。三平台 CI 打包及原生 SQLite 启动检查结果见后续构建记录。
+
+### 最终跨平台构建记录
+
+实现提交：883378c。GitHub Actions 运行 39456822610，macOS Intel、macOS Apple silicon、Windows x64 三个任务均成功，包括全量测试、TypeScript/构建、打包、安装包内容校验和原生 SQLite 读写冒烟检查。Windows 产物为支持卸载的 NSIS 安装程序。此轮未发布正式 GitHub Release，也未执行实体打印或 Windows 安装/卸载人工验收。浏览器 1120×820 最小桌面窗口检查通过。
+
+完整修改文件：
+- electron/types.ts、matching.ts、image-grids.ts、question-assets.ts：类型、验证、共享计分、资源收集。
+- electron/db.ts、learning-backup.ts：向前迁移、保存恢复、快照引用、原生判分。
+- electron/paper-plan.ts、paper-documents.ts：题量参数、乱序快照、Word 表格图片及答案。
+- src/App.vue、exam-store.ts、quick-exam.ts：录入、预览、筛选、练习、考试、提交及持久化。
+- src/components/AssetImage.vue、ImageGrids.vue、MatchingEditor.vue、MatchingQuestion.vue：新组件。
+- src/components/ExamHistory.vue、PaperWorkspace.vue：记录回看和组卷配置。
+- tests/matching.test.ts、matching-persistence.test.ts、question-media.test.ts、template-storage.test.ts：新功能及兼容回归。
+- docs/matching-image-grid-plan.md：审查、实施计划和验收记录。
+
+待人工确认项：真实乐器教学素材的内容校对、实体打印效果、Windows 安装/卸载操作。功能范围说明：第一版提供上方图片/文字、下方名称的一对一匹配；图文网格使用结构化块，未更换原编辑器；后续增强已支持题干段落之间的网格布局，不支持网格内再嵌套网格。
+
+
+## 段间图文布局增强（2026-10-21）
+
+ImageGridBlock 新增可选 afterParagraph：0 表示题干开头，正整数表示第几段之后；未设置保持旧版末尾行为。删除段落导致位置超出范围时，网格暂按题干末尾显示，保留原位置并在控件中说明。段落以录入的换行区分，不受窗口自动折行影响。该字段保存在现有 JSON 列，旧备份无需变更，无新增 SQLite schema 迁移。
+
+新增 electron/prompt-layout.ts，为预览、练习、考试、记录和 Word 导出共用文字/网格排序；切分格式片段而不丢弃加粗、倾斜和空白行。新增 QuestionPrompt.vue，替代各详情页单独的题干加末尾网格拼接。ImageGrids 增加位置选择；PromptEditor 暴露当前光标所在段落，新建网格默认插入该段之后，也可手动调整到开头或末尾。Word/PDF 使用原生表格保持相同顺序及说明对齐。另修正学生预览误显示连线标准答案的问题；教师编辑界面保留标准对应关系。
+
+修改文件：electron/types.ts、image-grids.ts、prompt-layout.ts、paper-documents.ts；src/App.vue；src/components/QuestionPrompt.vue、ImageGrids.vue、PromptEditor.vue、ExamHistory.vue；tests/prompt-layout.test.ts、paper-documents.test.ts、matching-persistence.test.ts。
+
+本机 175 项测试、30 个测试文件、Vue/TypeScript 检查、前端和 Electron 构建全部通过。浏览器验收包括两段题干中插入图片网格、第一段加粗、保存重开恢复、六张实际图片的 Word 预览；布局不使用页面截图作为导出内容。旧版没有位置字段的题目保持原有末尾布局。
+
+补充验收：完整导出 HTML 含六张实际加载的图片，通过 Electron documentPdf 生成一页 A4 PDF，再用 Poppler 渲染检查，段落/网格/说明/连线空白区顺序正确，无裁切。四图匹配题在模拟考试中全部连对得到 4/4 分，考试记录恢复全部图片、段落顺序及四条连接。未上传图片的空网格在预览和导出时忽略，不生成空 Word 表格，草稿中的可编辑网格保留。
+
+### 2026-10-21 练习草稿回归
+
+- 新增 `src/practice-drafts.ts`，将当前练习会话中的未提交答案按稳定试题 ID 保留；题目切换、筛选后可恢复。草稿与正式提交结果分离，不计入完成数或正确率。
+- `src/App.vue` 接入所有题型的草稿恢复；重新进入练习清空会话，错题重新练习清理对应旧草稿。数据仅在当前练习会话内保留，无数据库或迁移变更。
+- 新增 `tests/practice-drafts.test.ts`，验证部分连线、多选字符串、清空、已提交答案优先、空筛选池和会话重置。
+- 178 项测试通过；TypeScript、生产构建、diff 检查通过。浏览器实测：连线 1/4 组及填空 1/2 空分别切题往返均恢复，未提交时完成数仍为 0。
+
+### 2026-10-21 浏览器交卷一致性
+
+- 审查发现 `src/exam-store.ts` 的浏览器交卷分支缺少桌面 SQLite 分支已有的完整答卷校验，也未在最终交卷边界验证连线答案格式。
+- 补齐题目记录数量、所属考试、连续题号和连线答案结构校验；所有验证及重新计分完成后才写入记录。校验失败保留进行中状态和此前已保存答案。
+- 合法的未完成连接仍可交卷：按正确组数给分；空答案为零分。记录完整性校验不要求学生答完全部连接。
+- 新增 `tests/exam-submission.test.ts`，覆盖缺项、重复、错误考试/题号、损坏 JSON、重复/未知项目、失败后恢复、部分给分与空答案。调整原考生姓名测试为提供完整题号记录。
+- 182 项测试、TypeScript、生产构建与 diff 检查通过。本次无数据结构或数据库迁移变化。
+
+### 2026-10-21 原题型答卷展示回归
+
+- `electron/fill-answers.ts` 新增 `formatFillResponse`，按空号显示学生实际输入，保留漏答位置和旧记录中多余的输入，不将学生输入的 `|` 解释为教师备选答案。
+- `ExamHistory.vue` 使用逐空显示；简答题的原始换行也保留。模拟考试交卷后的填空参考答案统一使用 `formatFillAnswers`。
+- 184 项测试、TypeScript、生产构建、diff 检查通过。浏览器实测旧开发答卷填空输入“中强”交卷后在记录显示“第1空：中强”。多空、漏答及 CRLF 输入由回归测试覆盖。
+- 验收发现旧开发试卷快照部分题目缺少标准答案，界面明确显示“未设置答案”；不从当前题库补写历史快照，以保护历史原始内容。本次无 schema 变更。
+
+### 2026-10-21 考试完成度一致性
+
+- `src/question-answers.ts` 新增 `questionAnswerComplete`，统一连线、填空、判断、选择和简答的输入完成判定，完成度与正确性分离。
+- 填空题要求每一空非空且数量一致；连线题要求完整一对一；判断题识别 true/false；选择和简答识别非空输入。兼容没有 fillAnswers 的旧单空快照。
+- 考试进度、答题卡、未交卷历史记录使用同一函数。交卷前提示所有未答完题目的数量，允许确认后按原规则交卷；超时自动交卷不受提示阻挡。
+- 188 项测试、TypeScript、生产构建与 diff 检查通过。浏览器实测两空题：一空时 0/7，填满时 1/7，清空后一空时 0/7；未完成数量提示准确，确认后交卷成功，仍按原规则计分。
+- 无数据库或已保存答案格式变更。
+
+### 2026-10-21 历史素材备份完整链路
+
+- 新增真实 PNG/WAV 文件集成测试：四图连线 + 段间图文网格 + 音频 → 部分得分 → 删除原题 → JSON 备份 → 恢复到另一数据目录 → 关闭重开 → Word 导出。
+- 测试暴露原题已有错题/练习记录时删除被外键阻挡。`MusicBankDatabase.deleteQuestion` 现以事务清理该原题的练习记录和错题索引，再删除原题；其他试题的学习记录、历史考试/试卷快照及媒体文件保留。前端同步清理该题本次练习缓存和错题计数。
+- 验证恢复后图片、音频字节及 SHA256 元数据完整；原题已不存在时，快照中的匹配项目、正确关系、乱序、网格段落位置和 2/4 分答卷均保持。历史资源外键仍阻止物理删除，恢复后 Word 生成 5 处原生图片（网格 1 + 连线 4）。
+- 189 项测试通过；调整隔离测试后又单独重跑 matching-persistence 的 8 项测试通过；TypeScript、生产构建、diff 检查通过。本次不修改 schema。
+
+### 2026-10-21 需求核对与包内模块运行检查
+
+- 新增 `docs/matching-acceptance-audit.md`，逐项对应九阶段要求、实际实现、测试/操作证据和未验证边界；保留 Windows 人工安装卸载、实体打印和真实教材素材校对为待验收项。
+- 扩展 `scripts/verify-package.mjs`：检查包内 db.js，并通过发货 Electron 执行 `scripts/package-smoke.cjs`。直接导入 app.asar 内的实际 ESM 数据库模块，验证空题库初始化、schema、连线题保存、部分得分重算、删除原题及重启后的考试快照和乱序恢复。
+- smoke 只在系统临时目录创建测试数据库，结束后清理，不接触用户应用数据。三平台工作流使用该检查，修改 smoke 脚本也会触发主分支打包。
+- 189 项测试、TypeScript、构建通过；本机重新打包 macOS arm64，原生 SQLite 和应用数据库往返检查均通过，检查未打包用户数据。
+- 构建运行 39462802366 对应前一应用提交 3a9ddeb；扩展 smoke 的提交需另行发起构建，不混用不同提交的验证结果。
+
+### 2026-10-21 Windows 安装/卸载自动验收
+
+- 新增 `scripts/verify-windows-installer.ps1`，仅允许在 GitHub Actions Windows 临时 runner 执行，防止误在用户机器安装或卸载。
+- 工作流打包检查后实际运行 NSIS 安装器：安装到带空格的新目录，检查主程序、app.asar、桌面/开始菜单快捷方式及 Windows 卸载登记；通过安装后的 Electron 执行包内数据库 smoke；运行卸载器，检查程序/快捷方式/登记清除，且 APPDATA 中本次测试创建的哨兵文件保留。
+- 所有子进程有 120 秒超时，测试只清理自己创建的路径和哨兵文件，不删除整个用户数据目录。卸载器使用本项目依赖的 NSIS 模板支持的 /S、/currentuser 与 _?= 参数。
+- 本机 189 项测试、TypeScript、构建、diff 检查通过；macOS 本机不能运行 PowerShell/NSIS，安装链路结果以 Windows CI 为准，执行前不宣称通过。
+- 上一运行 39463166094：Windows x64、macOS Intel 的扩展包内数据库检查通过；Apple silicon 排队任务最终 cancelled，整轮 conclusion failure，不计作三平台全通过。
+
+### 2026-10-21 最新三平台及 Windows 安装链路结果
+
+- 实现提交 `6b74495`，GitHub Actions 运行 `39514019346`：macOS Intel、macOS Apple silicon、Windows x64 三个任务全部 success；没有发布 GitHub Release。
+- 三个平台均执行 189 项测试、类型检查、生产构建、打包、包内容检查、SQLite 和应用数据库往返检查。
+- Windows job `118941716281` 日志确认：`MusicBank Windows install, installed database, shortcuts, uninstall registration, uninstall and user-data retention passed.`
+- Windows 安装程序已在临时 runner 实际静默安装到带空格路径，从安装后的程序运行数据库测试，再实际卸载；应用文件、快捷方式、卸载登记清除，测试用户数据哨兵保留。并非只在 win-unpacked 目录模拟检查。
+- 验收表据此更新，人工向导/图形窗口、实体打印及教学素材校对仍单列待验证。此文档更新不改变上述受测实现提交。
+
+### 2026-10-21 图文网格图片对齐一致性
+
+- 审查发现图文网格的 align 只改变说明文字，浏览器 object-fit:contain 的图片仍默认居中；Word 原生图片段落已应用对应对齐。
+- 修正 ImageGrids.vue：完整显示时根据 align 设置图片 object-position，左/中/右与说明一致；裁剪铺满保持居中裁剪，沿用 Word 的居中裁剪方式。无需数据迁移。
+- 浏览器实际操作控件及预览验证：左对齐为 0% 50%，右对齐为 100% 50%，裁剪铺满为 50% 50%；两张已加载图片均生效。验收后恢复原编辑参数，没有改写题目数据。
+- 189 项测试、TypeScript、生产构建和 diff 检查通过；未对单条样式添加重复实现的测试。
+
+### 2026-10-21 WebP 桌面导出修复
+
+- 实际 Electron 复现：nativeImage 对 120×80 WebP 返回空图片，而同尺寸 JPEG 可读取。浏览器可显示 WebP，因此原问题只在桌面 Word 导出阶段暴露。
+- 新增 `electron/document-images.ts`：PNG/JPEG 沿用原生解码；原生无法读取时，使用隔离的隐藏 Chromium 窗口解码为 PNG。窗口无 Node 权限、sandbox/contextIsolation 开启、权限拒绝、网络仅允许 data，脚本为应用固定代码，图片以 base64 数据传入；有超时、尺寸检查及 finally 销毁。
+- document-handlers 的图片解析改为共用转换函数。已有 WebP 资源仍保存原文件和资源 ID，只在导出时转换，不要求重新插入，也不改变历史快照。
+- 新增 document-images.test.ts，覆盖原生路径、转换路径、隔离配置、失败清理及非法尺寸/输出拒绝；195 项测试、TypeScript、生产构建与 diff 检查通过。
+- 本机真实 Electron 验证 WebP/JPEG 均转换为 120×80 PNG、损坏文件拒绝；真实生成 `/tmp/musicbank-webp-jpeg-export.docx`，检查连线题两张图片都嵌入为有效 PNG。测试原始文件及文档均在临时目录，不接触应用题库。
+
+### 2026-10-21：原生多音频运行检查
+
+- 阅读 `QuestionMedia.vue`、`media-store.ts`、附件保存及原生资源响应实现：时长回写为原位更新，附件监听不使用深度监听，因此不会因加载时长重新创建播放器；切题或组件销毁会暂停旧音频并释放浏览器 URL。
+- 新增 `scripts/native-audio-smoke.cjs`，生成两份不同频率的真实三秒 PCM WAV，通过实际 `musicbank-asset` 协议及生产 `assetResponse` 读取，在 Electron 沙盒 renderer 中验证两份文件的 metadata、播放时间推进、暂停及 seek 到第二秒。静音执行，不读写用户题库；临时资源在 finally 中删除。
+- 本机 Apple silicon Electron 运行通过，两份结果均为 duration=3、currentTime=2、paused=true、error=null。它验证原生解码及协议链路，不替代附件录入/保存的数据库测试或人工听音。
+- 三平台构建新增同项检查，构建超时保护为 30 秒。新增检查的远程结果以对应 Actions 最终状态为准。
+
+### 2026-10-21：打包窗口与音频 CI 时序复核
+
+- Actions 39526589246（e015d0f）三平台全部通过，包含 WebP 图片导出修复；Windows 安装/卸载检查通过。
+- 使用原生界面工具实际打开 `release/mac-arm64/MusicBank.app`：窗口加载 ASAR 内 `dist/index.html`，首页可访问，原生题库显示 0 题。此为本机手工窗口验收，截图 `/tmp/musicbank-packaged-window.png`；不能等同 Windows 图形窗口验收，也未添加自动 GUI 测试钩子。
+- 发现首页教学提示写死 72% 正确率，空库也会显示。已改为不含虚构统计的教学建议。
+- Actions 39526781074（e3f85d5）Windows 音频及后续检查通过；两种 macOS 在新加音频步骤失败，日志为 playback did not advance。原脚本只等待 200ms；现改为最多 5 秒检查实际播放推进，并设置无物理音频输出模式。本机修改后通过；远程结果需重新确认，不能将先前构建全通过记录用于新脚本。
+- 本轮 `npm run build` 及 `git diff --check` 通过；上轮 195 项单元测试通过。产品改动仅为首页提示文案，未修改数据库结构、现有题目或快照。
+
+### 2026-10-21：连线题 Word 跨行分页
+
+- 审查确认 PDF 预览 `paginatePreview` 以完整表格为块移动，而 Word 导出此前仅含每行 `cantSplit`，未约束上下两组之间的分页。
+- 仅对连线题表格，在末行之前的全部单元格段落加入 `keepNext`，让图片、连线留白及名称尽量同页；末行不绑定后续题目。普通图文网格仍可按行分页。若内容本身超过整页，Word 的最终分页仍取决于页面可用高度。
+- 新增四张图片、乱序名称导出测试：检查所有非末行段落连续标记、末行不绑定、每行不拆分，以及学生卷无标准关系泄漏。
+- 196 项测试通过，重构后的 Word 专项测试再次通过；`npm run build`、`git diff --check` 通过。未将 OOXML 标记检查冒充 Microsoft Word 手工分页验收。
+- 音频修正构建 39527133275 的 Apple silicon 已通过音频步骤并进入打包；其他平台最终结果仍待 CI 完成。
+
+### 2026-10-21：超高图文网格分页
+
+- 发现 PDF/打印预览曾以完整表格为原子块移动，40 张图的多行网格可能高于一页；仅移动整表无法修复溢出。
+- `paginatePreview` 现在仅在表格自身高于可用页高时按完整行拆成续表；保留列宽、行组及模板页眉/页脚。能放入单页的连线题和网格继续整体移动，题号与首行尽量保持在一起。
+- 新增 `scripts/native-pagination-smoke.cjs`，使用实际 Electron Chromium 测量而非模拟 DOM：40 个单元格生成 4 页，逐页高度不超过 400px 可用区、顺序不丢失、列宽及页眉页脚保留；两行短表格不拆开且保留题号。此为排版算法的实际布局测试，不冒充真实乐器素材或实体打印验收。
+- 原生分页检查、本地 196 项单元测试、类型检查、构建及 diff 检查均通过。新增原生检查接入三平台 CI。
+- 音频修正提交 d67cf4c 对应 Actions 39527133275 的 macOS Intel、Apple silicon、Windows x64 最终全部成功；音频检查、打包验证及 Windows 安装/卸载均通过。该结果不覆盖此后的 Word 连续排版及本次网格分页提交，需重新构建。
+- 边界：单个表格行若本身高于整页，不能在不切断图片的前提下继续拆行；本次保留整行，不声称覆盖任意超长说明。
+
+### 2026-10-21：分页 PDF 输出独立验证
+
+- 加强原生分页回归：单元格现包含真实 PNG 测试图，等待图片解码后分页；测试页眉/页脚采用绝对定位，模拟 Word 页面边距。
+- 脚本随后调用生产 `documentPdf` 路径生成真实 PDF，检查当前 Skia 受控测试文件的页面字典数与已测分页数量一致。该检查针对本测试输出，不作为通用 PDF 解析器使用。
+- 本机实际结果：40 张 PNG 测试图、4 页、两行短连线表格保持不拆分。独立 Poppler `pdfinfo` 确认 4 页；`pdftotext` 提取的图片编号严格为 1–40；首末页 PNG 渲染检查无截断、页眉页脚保留。
+- 临时验收 PDF：`/tmp/musicbank-real-image-pagination.pdf`；首末页渲染为 `/tmp/musicbank-real-image-pagination-first.png` 和 `/tmp/musicbank-real-image-pagination-last.png`。这些是程序生成的色块测试素材，不冒充教师实际乐器图片。
+- 可复现命令：先 `npm run build`，再 `npx electron scripts/native-pagination-smoke.cjs --pdf=/tmp/musicbank-pagination.pdf`（Windows 使用适合本机的输出路径）。不提供 `--pdf` 时仅验证内存中的 PDF，不留下测试文件。
+
+### 2026-10-21：最终构建和交付复核
+
+- Actions 39528342980（31a0418）已完成，macOS Intel、Apple silicon、Windows x64 三任务全部 success；逐步核对原生音频、图文网格/真实 PDF 分页、包内数据库，及 Windows 安装/卸载均 success。
+- 三个 artifact 已确认存在且未过期，名称分别为 musicbank-macos-intel、musicbank-macos-apple-silicon、musicbank-windows-x64。未创建 Release，未合并主分支。
+- 实际数据模型、迁移、录入/复制/练习/考试/历史/导出入口及要求矩阵已重新核对；最终汇总见 musicbank-enhancement-delivery.md。31a0418 之后仅文档变更，无实现代码变化。
+- 当前工作区通过 diff 检查，既有原生数据未重置。实体打印、Windows 图形向导与复杂自定义模板的人工检查仍未执行；这些边界明确保留，不宣称人工验收通过。

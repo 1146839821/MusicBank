@@ -1,3 +1,4 @@
+import {matchingScore,validateMatchingAnswer} from '../electron/matching'
 import type {ExamAnswerRecord, ExamAttemptRecord, ExamSessionRecord, PaperRecord} from '../electron/types'
 import {candidateName} from '../electron/exam-identity'
 const key='musicbank.exam-sessions'
@@ -24,6 +25,9 @@ export async function saveExamResponse(answer:ExamAnswerRecord) {
   if(window.musicBank) return window.musicBank.exams.answer(answer)
   const sessions=localSessions(),session=sessions.find(session=>session.attempt.id===answer.attemptId)
   if(!session || session.attempt.status!=='进行中') throw new Error('考试不可作答')
+  const item=session.paper.items.find(item=>item.position===answer.position)
+  if(!item)throw new Error('答卷题号无效')
+  if(item.snapshot.type==='连线题'&&item.snapshot.matching)validateMatchingAnswer(answer.answer,item.snapshot.matching)
   session.answers=session.answers.filter(item=>item.position!==answer.position).concat(answer)
   write(sessions)
 }
@@ -31,6 +35,16 @@ export async function finishExam(attempt:ExamAttemptRecord,answers:ExamAnswerRec
   if(window.musicBank) return window.musicBank.exams.finish(attempt,answers)
   const sessions=localSessions(),session=sessions.find(session=>session.attempt.id===attempt.id)
   if(!session || session.attempt.status!=='进行中') throw new Error('考试不存在或已经交卷')
+  if(answers.length!==session.paper.items.length || answers.some((answer,index)=>answer.attemptId!==attempt.id || answer.position!==index+1)) throw new Error('答卷不完整')
+  answers=answers.map(answer=>{
+    const item=session.paper.items.find(item=>item.position===answer.position)
+    if(!item)throw new Error('答卷题号无效')
+    if(item.snapshot.type==='连线题'&&item.snapshot.matching){
+      validateMatchingAnswer(answer.answer,item.snapshot.matching)
+      return {...answer,score:matchingScore(answer.answer,item.snapshot.matching,item.score),reviewStatus:'已评分'}
+    }
+    return answer
+  })
   session.attempt={...session.attempt,status:'已交卷',submittedAt:attempt.submittedAt,remainingSeconds:attempt.remainingSeconds};session.answers=answers;write(sessions)
 }
 export async function reviewExamAnswer(input:{attemptId:string;position:number;score:number;comment:string}) {

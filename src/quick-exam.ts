@@ -1,3 +1,4 @@
+import {shuffleMatching} from '../electron/matching'
 import type {PaperRecord, QuestionRecord, QuestionType} from '../electron/types'
 
 const scores: Record<QuestionType, number> = {
@@ -5,6 +6,7 @@ const scores: Record<QuestionType, number> = {
   '判断题': 2,
   '填空题': 3,
   '简答题': 10,
+  '连线题': 4,
 }
 
 /** Build a quick exam only when no saved or configured paper is loaded. */
@@ -17,7 +19,7 @@ export function quickExam(questions: QuestionRecord[]): Pick<PaperRecord, 'name'
     position: index + 1,
     questionId: question.id,
     score: scores[question.type],
-    snapshot: JSON.parse(JSON.stringify(question)) as QuestionRecord,
+    snapshot: {...JSON.parse(JSON.stringify(question)),...(question.matching?{matching:shuffleMatching(question.matching)}:{})} as QuestionRecord,
   }))
   return {
     name: `${grades.size === 1 ? grade : '混合年级'}音乐综合模拟卷`,
