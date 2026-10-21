@@ -167,3 +167,11 @@ ImageGridBlock 新增可选 afterParagraph：0 表示题干开头，正整数表
 - 新增 `scripts/native-audio-smoke.cjs`，生成两份不同频率的真实三秒 PCM WAV，通过实际 `musicbank-asset` 协议及生产 `assetResponse` 读取，在 Electron 沙盒 renderer 中验证两份文件的 metadata、播放时间推进、暂停及 seek 到第二秒。静音执行，不读写用户题库；临时资源在 finally 中删除。
 - 本机 Apple silicon Electron 运行通过，两份结果均为 duration=3、currentTime=2、paused=true、error=null。它验证原生解码及协议链路，不替代附件录入/保存的数据库测试或人工听音。
 - 三平台构建新增同项检查，构建超时保护为 30 秒。新增检查的远程结果以对应 Actions 最终状态为准。
+
+### 2026-10-21：打包窗口与音频 CI 时序复核
+
+- Actions 39526589246（e015d0f）三平台全部通过，包含 WebP 图片导出修复；Windows 安装/卸载检查通过。
+- 使用原生界面工具实际打开 `release/mac-arm64/MusicBank.app`：窗口加载 ASAR 内 `dist/index.html`，首页可访问，原生题库显示 0 题。此为本机手工窗口验收，截图 `/tmp/musicbank-packaged-window.png`；不能等同 Windows 图形窗口验收，也未添加自动 GUI 测试钩子。
+- 发现首页教学提示写死 72% 正确率，空库也会显示。已改为不含虚构统计的教学建议。
+- Actions 39526781074（e3f85d5）Windows 音频及后续检查通过；两种 macOS 在新加音频步骤失败，日志为 playback did not advance。原脚本只等待 200ms；现改为最多 5 秒检查实际播放推进，并设置无物理音频输出模式。本机修改后通过；远程结果需重新确认，不能将先前构建全通过记录用于新脚本。
+- 本轮 `npm run build` 及 `git diff --check` 通过；上轮 195 项单元测试通过。产品改动仅为首页提示文案，未修改数据库结构、现有题目或快照。
