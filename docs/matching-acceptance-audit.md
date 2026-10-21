@@ -19,8 +19,9 @@
 |资源保护及备份|questionAssets、question_asset_refs、paper_asset_refs；真实 PNG/WAV 备份恢复并重启测试|字节与 hash 元数据保留；历史引用阻止物理删除；不把原始路径写入题目|
 |Word/PDF/打印布局|paper-documents 原生表格及嵌图、编号答案；实际 Electron PDF 及 Poppler 渲染验收|PDF 使用 Word 排版 DOM，非互动界面截图；实体打印尚未验收|
 |迁移、备份、开发分支|实施报告中备份目录；2026102001 向前 CHECK/JSON 列迁移；旧学习记录保留测试|未重置用户数据库；开发数据与打包初始库分离|
-|三平台安装包|build-desktop.yml 的 Intel/Apple silicon/Windows x64；verify-package 及 package-smoke|构建结果必须关联具体提交；新 smoke 使用包内模块验证真实数据库初始化及考试往返|
+|三平台安装包|提交 6b74495，Actions 39514019346 的 Intel/Apple silicon/Windows x64 全部成功|包内模块完成空库初始化、保存、交卷、原题删除、数据库重开及快照恢复|
+|Windows 安装与卸载|同一运行的 Windows job 118941716281 实际运行 verify-windows-installer.ps1，日志确认安装、安装后数据库、快捷方式、卸载登记、卸载及用户数据保留通过|安装到带空格目录；静默安装/卸载已实测，人工向导与图形窗口尚未操作验收|
 
-仍需人工环境验证：Windows 安装/启动窗口/卸载操作、实体打印机输出、教师真实乐器素材内容校对。CI 内运行 Electron 的数据库模块检查并不等于人工安装及图形窗口验收。未将这些项目标记为已完成。
+仍需人工环境验证：Windows 安装向导/图形窗口/卸载向导的交互、实体打印机输出、教师真实乐器素材内容校对。静默安装和卸载已由 Windows CI 实际执行并通过；不能将其替代人工窗口验收。未将这些人工项目标记为已完成。
 
 具体每轮测试数量、提交和构建记录见 matching-image-grid-plan.md。

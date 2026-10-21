@@ -137,3 +137,11 @@ ImageGridBlock 新增可选 afterParagraph：0 表示题干开头，正整数表
 - 所有子进程有 120 秒超时，测试只清理自己创建的路径和哨兵文件，不删除整个用户数据目录。卸载器使用本项目依赖的 NSIS 模板支持的 /S、/currentuser 与 _?= 参数。
 - 本机 189 项测试、TypeScript、构建、diff 检查通过；macOS 本机不能运行 PowerShell/NSIS，安装链路结果以 Windows CI 为准，执行前不宣称通过。
 - 上一运行 39463166094：Windows x64、macOS Intel 的扩展包内数据库检查通过；Apple silicon 排队任务最终 cancelled，整轮 conclusion failure，不计作三平台全通过。
+
+### 2026-10-21 最新三平台及 Windows 安装链路结果
+
+- 实现提交 `6b74495`，GitHub Actions 运行 `39514019346`：macOS Intel、macOS Apple silicon、Windows x64 三个任务全部 success；没有发布 GitHub Release。
+- 三个平台均执行 189 项测试、类型检查、生产构建、打包、包内容检查、SQLite 和应用数据库往返检查。
+- Windows job `118941716281` 日志确认：`MusicBank Windows install, installed database, shortcuts, uninstall registration, uninstall and user-data retention passed.`
+- Windows 安装程序已在临时 runner 实际静默安装到带空格路径，从安装后的程序运行数据库测试，再实际卸载；应用文件、快捷方式、卸载登记清除，测试用户数据哨兵保留。并非只在 win-unpacked 目录模拟检查。
+- 验收表据此更新，人工向导/图形窗口、实体打印及教学素材校对仍单列待验证。此文档更新不改变上述受测实现提交。
